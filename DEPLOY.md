@@ -257,6 +257,8 @@ is not compressing the stream.
 | `redirect_uri_mismatch` | Step 3.1 not done, or a trailing-slash mismatch. |
 | Signs in, bounces back to the landing page | Cookie rejected. Check SSL/TLS is **Full (strict)**, not Flexible. |
 | Redirect loop | Same — Flexible SSL mode. |
+| Build succeeds, **`Network > Healthcheck` fails** | The container booted and exited. Open the **Deploy** log (not Build): a `[boot] FAILED TO START:` line names the cause. Usually a missing variable or an unreachable `DATABASE_URL`. |
+| Railway created two services named `@humantype/client` and `@humantype/server` | It split the npm workspaces. Delete both, create one service with **Root Directory `/`** and **Builder: Dockerfile**. This app is a single service by design. |
 | `502` / `Bad gateway` | App container not up. `docker compose logs app` or the host's log tab. |
 | Preview empty, doc still fills | SSE buffered by a proxy. |
 | Jobs die after 7 days for a user | The Testing-mode refresh token expiry above. |

@@ -1,3 +1,6 @@
+// Must stay the first import: it validates the environment before any module
+// that reads a secret while loading (db/pool.ts) gets a chance to throw.
+import './preflight.js';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,7 +15,7 @@ import { configurePassport, passport } from './auth/passport.js';
 import { authRouter } from './auth/routes.js';
 import { failOrphanedJobs } from './db/jobs.js';
 import { migrate } from './db/migrate.js';
-import { closePool, pool } from './db/pool.js';
+import { closePool, pool, waitForDatabase } from './db/pool.js';
 import { disposeAllChannels } from './jobs/events.js';
 import { jobQueue } from './jobs/queue.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
@@ -106,9 +109,14 @@ export function createApp(): express.Express {
 }
 
 async function main(): Promise<void> {
+  console.log(`[boot] starting HumanType (${config.nodeEnv}), port ${config.port}`);
+
   // Fail loudly at boot rather than on the first request that needs a secret.
   assertRequiredEnv();
 
+  // The database is usually the slowest dependency to come up on a fresh
+  // deploy, so wait for it rather than exiting on the first refused connection.
+  await waitForDatabase();
   await migrate();
 
   // The queue is in-memory, so nothing survived the restart. Say so honestly
@@ -117,8 +125,11 @@ async function main(): Promise<void> {
   if (orphaned > 0) console.log(`[boot] marked ${orphaned} interrupted job(s) as failed`);
 
   const app = createApp();
-  const server = app.listen(config.port, () => {
-    console.log(`[boot] HumanType API listening on :${config.port} (${config.nodeEnv})`);
+  // Bind on all interfaces explicitly: a platform's health check reaches the
+  // container over its private network, not loopback.
+  const server = app.listen(config.port, '0.0.0.0', () => {
+    console.log(`[boot] HumanType API listening on 0.0.0.0:${config.port} (${config.nodeEnv})`);
+    console.log(`[boot] health check at /health, client origin ${config.clientUrl}`);
     console.log(`[boot] flush interval ${config.jobs.flushIntervalMs}ms, ` +
       `write ceiling ${config.jobs.writesPerMinute}/min/job`);
   });
@@ -143,7 +154,13 @@ async function main(): Promise<void> {
 // Only boot when executed directly, so tests can import createApp.
 if (process.env.NODE_ENV !== 'test') {
   main().catch((error) => {
-    console.error('[boot] failed to start:', error);
+    console.error('[boot] FAILED TO START:', error instanceof Error ? error.message : error);
+    if (error instanceof Error && error.stack) console.error(error.stack);
+    console.error(
+      '[boot] The container will exit and the deployment health check will fail. ' +
+        'The message above is the actual cause — missing environment variables and an ' +
+        'unreachable DATABASE_URL are the two usual ones.',
+    );
     process.exit(1);
   });
 }
