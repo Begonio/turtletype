@@ -1,0 +1,109 @@
+@import 'tailwindcss';
+
+@theme {
+  --color-ink-950: #08090c;
+  --color-ink-900: #0c0e13;
+  --color-ink-850: #11141b;
+  --color-ink-800: #161a23;
+  --color-ink-700: #1f2531;
+  --color-ink-600: #2c3442;
+  --color-ink-400: #6b7688;
+  --color-ink-300: #98a2b3;
+  --color-ink-200: #c7cedb;
+
+  --color-accent-400: #7dd3a8;
+  --color-accent-500: #4ade80;
+  --color-accent-600: #22c55e;
+
+  --font-mono:
+    'JetBrains Mono', 'SFMono-Regular', ui-monospace, Menlo, Consolas, 'Liberation Mono', monospace;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background-color: var(--color-ink-950);
+  color: var(--color-ink-200);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* The preview is a terminal, so it gets a terminal's scrollbar. */
+.thin-scroll::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.thin-scroll::-webkit-scrollbar-thumb {
+  background: var(--color-ink-700);
+  border-radius: 999px;
+}
+.thin-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+input[type='range'] {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+input[type='range']::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--color-ink-700);
+}
+
+input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  margin-top: -6px;
+  height: 16px;
+  width: 16px;
+  border-radius: 999px;
+  background: var(--color-accent-500);
+  border: 2px solid var(--color-ink-950);
+  transition: transform 120ms ease;
+}
+
+input[type='range']:hover::-webkit-slider-thumb {
+  transform: scale(1.12);
+}
+
+input[type='range']::-moz-range-track {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--color-ink-700);
+}
+
+input[type='range']::-moz-range-thumb {
+  height: 16px;
+  width: 16px;
+  border: 2px solid var(--color-ink-950);
+  border-radius: 999px;
+  background: var(--color-accent-500);
+}
+
+@keyframes caret-blink {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+
+.caret {
+  animation: caret-blink 1.05s step-end infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .caret {
+    animation: none;
+  }
+}

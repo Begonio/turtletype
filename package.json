@@ -1,0 +1,23 @@
+{
+  "name": "humantype",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Paste text, watch it get typed into your Google Doc like a real human.",
+  "workspaces": [
+    "server",
+    "client"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspaces --if-present",
+    "dev:server": "npm run dev -w server",
+    "dev:client": "npm run dev -w client",
+    "build": "npm run build -w server && npm run build -w client",
+    "start": "npm run start -w server",
+    "migrate": "npm run migrate -w server",
+    "test": "npm run test -w server",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
