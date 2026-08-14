@@ -70,6 +70,23 @@ function bool(name: string, fallback: boolean): boolean {
   return raw === 'true' || raw === '1';
 }
 
+/**
+ * Express's `trust proxy` setting. Accepts `false`, `true`, or a hop count.
+ *
+ * The hop count matters when more than one proxy sits in front of the app —
+ * Cloudflare in front of a platform router, for example, is two. Getting it
+ * wrong means `req.ip` reports a proxy address rather than the client.
+ */
+function trustProxySetting(fallback: boolean): boolean | number {
+  const raw = process.env.TRUST_PROXY;
+  if (raw === undefined || raw === '') return fallback;
+  if (raw === 'true' || raw === '1') return 1;
+  if (raw === 'false' || raw === '0') return false;
+  const hops = Number(raw);
+  if (Number.isInteger(hops) && hops > 0) return hops;
+  throw new Error(`TRUST_PROXY must be true, false, or a positive hop count, got "${raw}"`);
+}
+
 const nodeEnv = process.env.NODE_ENV ?? 'development';
 
 export const config = {
@@ -77,7 +94,7 @@ export const config = {
   isProduction: nodeEnv === 'production',
   port: num('PORT', 8080),
   clientUrl: (process.env.CLIENT_URL ?? 'http://localhost:5173').replace(/\/$/, ''),
-  trustProxy: bool('TRUST_PROXY', nodeEnv === 'production'),
+  trustProxy: trustProxySetting(nodeEnv === 'production'),
 
   get sessionSecret(): string {
     return required('SESSION_SECRET');

@@ -7,6 +7,7 @@ import express from 'express';
 import session from 'express-session';
 import helmet from 'helmet';
 import { assertRequiredEnv, config } from './config.js';
+import { resolveCookiePolicy } from './auth/cookiePolicy.js';
 import { configurePassport, passport } from './auth/passport.js';
 import { authRouter } from './auth/routes.js';
 import { failOrphanedJobs } from './db/jobs.js';
@@ -20,30 +21,21 @@ import { meRouter } from './routes/me.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
-/**
- * When the API and the frontend live on different origins in production, the
- * session cookie has to be SameSite=None; Secure or the browser drops it on
- * the OAuth round trip.
- */
-function cookiePolicy(): { sameSite: 'lax' | 'none'; secure: boolean } {
-  let crossSite = false;
-  try {
-    crossSite = new URL(config.clientUrl).origin !== new URL(config.google.callbackUrl).origin;
-  } catch {
-    crossSite = false;
-  }
-  if (crossSite && config.isProduction) return { sameSite: 'none', secure: true };
-  return { sameSite: 'lax', secure: config.isProduction };
-}
-
 export function createApp(): express.Express {
   const app = express();
   const PgSession = connectPgSimple(session);
-  const cookie = cookiePolicy();
+  const cookie = resolveCookiePolicy(
+    config.clientUrl,
+    config.google.callbackUrl,
+    config.isProduction,
+  );
 
-  if (config.trustProxy) {
-    // Required behind Railway/Render/nginx so secure cookies are actually set.
-    app.set('trust proxy', 1);
+  if (config.trustProxy !== false) {
+    // Required behind any TLS-terminating proxy (Cloudflare, Railway, Render,
+    // nginx) so `req.protocol` reports https and secure cookies are set.
+    // Set TRUST_PROXY to the number of proxies in front of the app — two when
+    // Cloudflare sits in front of a platform router.
+    app.set('trust proxy', config.trustProxy);
   }
 
   app.use(

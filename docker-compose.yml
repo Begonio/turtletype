@@ -1,0 +1,67 @@
+# Self-hosted HumanType: app + Postgres + Caddy for TLS.
+#
+#   cp .env.example .env      # fill in the Google credentials and secrets
+#   docker compose up -d
+#
+# Caddy obtains a certificate for the domain in APP_DOMAIN automatically. If
+# Cloudflare's proxy (the orange cloud) is in front, use a Cloudflare Origin
+# Certificate instead — see DEPLOY.md, "Option C".
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-humantype}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-humantype}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-humantype} -d ${POSTGRES_DB:-humantype}']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # Not published to the host: only the app container needs to reach it.
+    expose:
+      - '5432'
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 8080
+      DATABASE_URL: postgres://${POSTGRES_USER:-humantype}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-humantype}?sslmode=disable
+      SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:?set GOOGLE_CLIENT_ID in .env}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:?set GOOGLE_CLIENT_SECRET in .env}
+      GOOGLE_CALLBACK_URL: https://${APP_DOMAIN:?set APP_DOMAIN in .env}/auth/google/callback
+      CLIENT_URL: https://${APP_DOMAIN}
+      # Caddy is one hop; Cloudflare in front of it makes two.
+      TRUST_PROXY: ${TRUST_PROXY:-2}
+    expose:
+      - '8080'
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - '80:80'
+      - '443:443'
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  db-data:
+  caddy-data:
+  caddy-config:

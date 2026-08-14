@@ -222,6 +222,9 @@ survive the tab closing — reopening `/app` re-attaches to a job still in fligh
 
 ## Deploying
 
+**See [DEPLOY.md](DEPLOY.md)** for the full runbook — Railway, Render or a self-hosted Docker
+stack, plus Cloudflare DNS/TLS settings and the Google consent-screen steps.
+
 The server serves `client/dist` when it exists, so the simplest production setup is one service on
 one origin (which also sidesteps third-party cookie restrictions entirely).
 

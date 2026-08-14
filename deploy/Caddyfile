@@ -1,0 +1,28 @@
+{$APP_DOMAIN} {
+	# The live progress stream must never be buffered or compressed, or events
+	# arrive in one lump when the job finishes instead of character by
+	# character. Everything else is worth compressing (the JS bundle is ~190KB
+	# raw, ~62KB gzipped).
+	@sse path_regexp ^/api/jobs/[^/]+/stream$
+	@compressible not path_regexp ^/api/jobs/[^/]+/stream$
+
+	encode @compressible zstd gzip
+
+	handle @sse {
+		reverse_proxy app:8080 {
+			# -1 disables response buffering entirely: bytes go out as they
+			# are produced.
+			flush_interval -1
+			transport http {
+				# A job can legitimately sit quiet during a long paragraph
+				# pause. The app sends a heartbeat comment every 15s, so this
+				# ceiling is never actually reached.
+				response_header_timeout 5m
+			}
+		}
+	}
+
+	handle {
+		reverse_proxy app:8080
+	}
+}
