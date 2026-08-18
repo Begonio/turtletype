@@ -55,11 +55,14 @@ export interface CreateJobResponse {
   minDurationMs: number;
   /** Separate writing sessions — roughly how many revisions the doc will show. */
   bursts: number;
+  /** Mistakes the plan will make and later go back to fix. */
+  typos: number;
 }
 
 export interface EstimateResponse {
   minDurationMs: number;
   bursts: number;
+  typos: number;
   totalChars: number;
   maxDurationMs: number;
 }
@@ -80,14 +83,14 @@ export interface JobSnapshot {
 export const api = {
   me: () => request<{ user: CurrentUser }>('/api/me'),
 
-  createJob: (input: { text: string; humanness: number; durationMs?: number; docId?: string }) =>
+  createJob: (input: { text: string; durationMs?: number; docId?: string }) =>
     request<CreateJobResponse>('/api/jobs', {
       method: 'POST',
       body: JSON.stringify(input),
     }),
 
   /** How long this text would take at minimum, and how many bursts that is. */
-  estimate: (input: { text: string; humanness: number }, signal?: AbortSignal) =>
+  estimate: (input: { text: string }, signal?: AbortSignal) =>
     request<EstimateResponse>('/api/estimate', {
       method: 'POST',
       body: JSON.stringify(input),

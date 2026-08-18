@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   countBursts,
+  countRepairs,
+  DEFAULT_HUMANNESS,
   estimateDurationMs,
   humanize,
   minimumDurationMs,
@@ -18,6 +20,8 @@ function replay(events: HumanEvent[]): string {
   for (const event of events) {
     if (event.type === 'type') out += event.char;
     else if (event.type === 'backspace') out = out.slice(0, Math.max(0, out.length - event.count));
+    else if (event.type === 'repair')
+      out = out.slice(0, event.offset) + event.insert + out.slice(event.offset + event.remove);
   }
   return out;
 }
@@ -69,18 +73,13 @@ describe('humanize', () => {
   it('makes no mistakes at humanness 0', () => {
     for (let seed = 0; seed < 50; seed++) {
       const events = humanize(SAMPLE, { humanness: 0, seed, ...FAST_REST });
-      assert.equal(
-        events.some((event) => event.type === 'backspace'),
-        false,
-        `seed ${seed} produced a typo at humanness 0`,
-      );
+      assert.equal(countRepairs(events), 0, `seed ${seed} produced a typo at humanness 0`);
     }
   });
 
-  it('makes mistakes at humanness 1', () => {
-    const events = humanize(SAMPLE.repeat(4), { humanness: 1, seed: 11, ...FAST_REST });
-    const corrections = events.filter((event) => event.type === 'backspace').length;
-    assert.ok(corrections > 0, 'expected at least one correction at humanness 1');
+  it('makes mistakes at the default setting', () => {
+    const events = humanize(SAMPLE.repeat(4), { seed: 11, ...FAST_REST });
+    assert.ok(countRepairs(events) > 0, 'expected at least one mistake at the default setting');
   });
 
   it('keeps per-character delays in the 60–140ms band, whatever the target duration', () => {
@@ -160,6 +159,105 @@ describe('bursts and rests', () => {
     for (const rest of rests) {
       assert.ok(rest.duration >= minChunkRestMs, `rest of ${rest.duration}ms is under the floor`);
     }
+  });
+});
+
+/**
+ * Google Docs merges edits that happen close together into one revision. A
+ * typo corrected a second after it was made is therefore invisible in version
+ * history no matter how it is sent. The mistake has to survive a full rest.
+ */
+describe('mistakes are left in place and fixed later', () => {
+  const eventsFor = (seed: number): HumanEvent[] =>
+    humanize(ESSAY, { humanness: 1, seed, ...FAST_REST });
+
+  it('always puts a full rest between the mistake and its correction', () => {
+    // Every repair must be the first thing that happens after coming back from
+    // a break. That gap is what lets Docs record the typo as its own revision
+    // before the correction arrives as a second one.
+    let totalChecked = 0;
+
+    for (let seed = 0; seed < 40; seed++) {
+      const events = eventsFor(seed);
+
+      events.forEach((event, index) => {
+        if (event.type !== 'repair') return;
+        const previous = events[index - 1];
+        assert.ok(
+          previous?.type === 'pause' && previous.rest === true,
+          `seed ${seed}: correction at ${index} follows ${previous?.type}, not a rest`,
+        );
+        totalChecked += 1;
+      });
+    }
+
+    assert.ok(totalChecked > 20, `expected plenty of corrections to check, saw ${totalChecked}`);
+  });
+
+  it('waits a beat before reaching back to fix it', () => {
+    const events = eventsFor(3).filter(
+      (event): event is Extract<HumanEvent, { type: 'repair' }> => event.type === 'repair',
+    );
+    assert.ok(events.length > 0);
+    for (const repair of events) {
+      // Rereading, spotting it, moving the cursor — not an instant machine edit.
+      assert.ok(repair.delay >= 600, `correction delay ${repair.delay}ms is too abrupt`);
+    }
+  });
+
+  it('keeps typing to the end of the word after fumbling it', () => {
+    // The characters immediately after a mistake must be ordinary typing, not
+    // an instant backspace.
+    const events = humanize(ESSAY, { humanness: 1, seed: 2, ...FAST_REST });
+    assert.equal(
+      events.some((event) => event.type === 'backspace'),
+      false,
+      'the engine should no longer correct anything on the spot',
+    );
+    assert.ok(countRepairs(events) > 0, 'but it should still be making mistakes');
+  });
+
+  it('only ever leaves one mistake outstanding at a time', () => {
+    // Two unfixed typos at once would make the second one's offset wrong.
+    for (let seed = 0; seed < 40; seed++) {
+      const events = humanize(ESSAY, { humanness: 1, seed, ...FAST_REST });
+      assert.equal(replay(events), ESSAY, `seed ${seed} corrupted the text`);
+    }
+  });
+
+  it('repairs target text that is actually there', () => {
+    for (let seed = 0; seed < 40; seed++) {
+      const events = humanize(ESSAY, { humanness: 1, seed, ...FAST_REST });
+      let written = '';
+      for (const event of events) {
+        if (event.type === 'type') written += event.char;
+        else if (event.type === 'repair') {
+          assert.ok(
+            event.offset >= 0 && event.offset + event.remove <= written.length,
+            `seed ${seed}: repair at ${event.offset}+${event.remove} is outside ${written.length} written chars`,
+          );
+          written =
+            written.slice(0, event.offset) + event.insert + written.slice(event.offset + event.remove);
+        }
+      }
+      assert.equal(written, ESSAY);
+    }
+  });
+
+  it('always fixes a mistake made in the final burst', () => {
+    for (let seed = 0; seed < 60; seed++) {
+      const events = humanize(SAMPLE, { humanness: 1, seed, ...FAST_REST });
+      // Round-tripping proves nothing was left broken at the end.
+      assert.equal(replay(events), SAMPLE, `seed ${seed} ended with an unfixed mistake`);
+    }
+  });
+
+  it('defaults to a fixed human setting with no slider involved', () => {
+    assert.ok(DEFAULT_HUMANNESS > 0.5, 'the default should be firmly human');
+    const withDefault = humanize(ESSAY, { seed: 15, ...FAST_REST });
+    const explicit = humanize(ESSAY, { humanness: DEFAULT_HUMANNESS, seed: 15, ...FAST_REST });
+    assert.deepEqual(withDefault, explicit);
+    assert.ok(countRepairs(withDefault) > 0, 'the default must actually produce mistakes');
   });
 });
 

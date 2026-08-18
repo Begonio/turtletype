@@ -19,9 +19,13 @@ export class TypingBuffer {
     return this.ops.length === 0;
   }
 
-  /** Pauses carry no document change; only type and backspace land here. */
+  /**
+   * Only appends land here. Pauses carry no document change, and repairs
+   * target a position inside already-written text, so the runner sends those
+   * itself rather than letting them queue behind pending appends.
+   */
   push(event: HumanEvent): void {
-    if (event.type === 'pause') return;
+    if (event.type === 'pause' || event.type === 'repair') return;
 
     const last = this.ops[this.ops.length - 1];
     if (event.type === 'type') {

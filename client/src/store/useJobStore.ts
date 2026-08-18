@@ -6,7 +6,10 @@ export type Phase = 'idle' | 'starting' | JobStatus;
 export type DocMode = 'new' | 'existing';
 export type ConnectionState = 'idle' | 'connecting' | 'open' | 'reconnecting';
 
-type WireOp = { kind: 'insert'; text: string } | { kind: 'delete'; count: number };
+type WireOp =
+  | { kind: 'insert'; text: string }
+  | { kind: 'delete'; count: number }
+  | { kind: 'repair'; offset: number; remove: number; insert: string };
 
 /** How much of the tail the preview keeps. Enough to read, bounded for 200k jobs. */
 const PREVIEW_LIMIT = 6_000;
@@ -26,7 +29,8 @@ interface JobStore {
   /** Separate writing sessions the plan will produce, i.e. expected revisions. */
   bursts: number;
   estimating: boolean;
-  humanness: number;
+  /** Characters that have scrolled off the front of the preview. */
+  previewDropped: number;
   docMode: DocMode;
   docUrlInput: string;
 
@@ -50,7 +54,6 @@ interface JobStore {
   setText: (text: string) => void;
   setDurationMs: (durationMs: number | null) => void;
   refreshEstimate: () => void;
-  setHumanness: (humanness: number) => void;
   setDocMode: (mode: DocMode) => void;
   setDocUrlInput: (value: string) => void;
   startJob: () => Promise<void>;
@@ -77,13 +80,37 @@ const ESTIMATE_DEBOUNCE_MS = 500;
 
 const TERMINAL: Phase[] = ['done', 'failed', 'cancelled'];
 
-function applyOps(preview: string, ops: WireOp[]): string {
+/**
+ * Applies document ops to the preview.
+ *
+ * The preview only keeps the tail, so `dropped` records how many characters
+ * have scrolled off the front. Repairs arrive as absolute offsets from the
+ * start of the job's text and have to be translated into that window; one
+ * aimed at text that has already scrolled away is simply skipped.
+ */
+function applyOps(
+  preview: string,
+  dropped: number,
+  ops: WireOp[],
+): { preview: string; dropped: number } {
   let next = preview;
+
   for (const op of ops) {
-    if (op.kind === 'insert') next += op.text;
-    else next = next.slice(0, Math.max(0, next.length - op.count));
+    if (op.kind === 'insert') {
+      next += op.text;
+    } else if (op.kind === 'delete') {
+      next = next.slice(0, Math.max(0, next.length - op.count));
+    } else {
+      const local = op.offset - dropped;
+      if (local >= 0 && local + op.remove <= next.length) {
+        next = next.slice(0, local) + op.insert + next.slice(local + op.remove);
+      }
+    }
   }
-  return next.length > PREVIEW_LIMIT ? next.slice(next.length - PREVIEW_LIMIT) : next;
+
+  if (next.length <= PREVIEW_LIMIT) return { preview: next, dropped };
+  const overflow = next.length - PREVIEW_LIMIT;
+  return { preview: next.slice(overflow), dropped: dropped + overflow };
 }
 
 export const useJobStore = create<JobStore>()(
@@ -98,7 +125,7 @@ export const useJobStore = create<JobStore>()(
       maxDurationMs: 24 * 60 * 60 * 1_000,
       bursts: 0,
       estimating: false,
-      humanness: 0.5,
+      previewDropped: 0,
       docMode: 'new',
       docUrlInput: '',
 
@@ -138,12 +165,6 @@ export const useJobStore = create<JobStore>()(
         get().refreshEstimate();
       },
       setDurationMs: (durationMs) => set({ durationMs }),
-      setHumanness: (humanness) => {
-        set({ humanness });
-        // Typos add keystrokes, so the floor moves with this too.
-        get().refreshEstimate();
-      },
-
       /**
        * Asks the server what the shortest believable duration for this text is.
        * Debounced, and older replies are discarded, so typing quickly cannot
@@ -167,7 +188,7 @@ export const useJobStore = create<JobStore>()(
           const requestId = ++estimateRequestId;
 
           void api
-            .estimate({ text: get().text, humanness: get().humanness }, controller.signal)
+            .estimate({ text: get().text }, controller.signal)
             .then((estimate) => {
               if (requestId !== estimateRequestId) return;
               set((state) => ({
@@ -190,7 +211,7 @@ export const useJobStore = create<JobStore>()(
       setDocUrlInput: (docUrlInput) => set({ docUrlInput }),
 
       async startJob() {
-        const { text, durationMs, humanness, docMode, docUrlInput } = get();
+        const { text, durationMs, docMode, docUrlInput } = get();
         if (!text.trim() || get().phase === 'starting') return;
 
         get().detachStream();
@@ -199,6 +220,7 @@ export const useJobStore = create<JobStore>()(
           error: null,
           notice: null,
           preview: '',
+          previewDropped: 0,
           pct: 0,
           charsWritten: 0,
           charsPerMinute: 0,
@@ -210,7 +232,6 @@ export const useJobStore = create<JobStore>()(
         try {
           const response = await api.createJob({
             text,
-            humanness,
             // Omitted means "run at the natural minimum", which the server computes.
             ...(durationMs ? { durationMs } : {}),
             ...(docMode === 'existing' && docUrlInput.trim() ? { docId: docUrlInput.trim() } : {}),
@@ -322,7 +343,7 @@ export const useJobStore = create<JobStore>()(
             charsWritten: data.charsWritten,
             totalChars: data.totalChars,
             charsPerMinute: data.charsPerMinute,
-            preview: applyOps(state.preview, data.ops),
+            ...applyOps(state.preview, state.previewDropped, data.ops),
             notice: null,
           }));
         });
@@ -405,6 +426,7 @@ export const useJobStore = create<JobStore>()(
           charsPerMinute: 0,
           estimatedMs: null,
           preview: '',
+          previewDropped: 0,
           error: null,
           notice: null,
         });
@@ -417,7 +439,6 @@ export const useJobStore = create<JobStore>()(
       partialize: (state) => ({
         text: state.text,
         durationMs: state.durationMs,
-        humanness: state.humanness,
         docMode: state.docMode,
         docUrlInput: state.docUrlInput,
         jobId: TERMINAL.includes(state.phase) ? null : state.jobId,

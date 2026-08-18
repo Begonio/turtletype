@@ -209,6 +209,15 @@ export class JobRunner {
         continue;
       }
 
+      if (event.type === 'repair') {
+        // Everything typed so far has to be in the document before an edit is
+        // aimed at a position inside it.
+        await this.flushOnce();
+        await sleep(event.delay, this.controller.signal);
+        await this.repair(event.offset, event.remove, event.insert);
+        continue;
+      }
+
       if (event.type === 'backspace') {
         // Commit the mistake to the document *before* deleting it. Within a
         // single flush window the planner would otherwise trim the typo out of
@@ -259,6 +268,27 @@ export class JobRunner {
     await this.emitProgress(ops);
   }
 
+  /** Goes back and corrects a mistake left in the text earlier. */
+  private async repair(offset: number, remove: number, insert: string): Promise<void> {
+    if (!this.writer) return;
+
+    const result = await this.writer.repair(offset, remove, insert, {
+      signal: this.controller.signal,
+      onRetry: ({ attempt, delayMs, status }) => {
+        emitJobEvent(this.spec.jobId, {
+          type: 'retry',
+          attempt,
+          delayMs,
+          ...(status === undefined ? {} : { httpStatus: status }),
+        });
+      },
+    });
+
+    this.charsWritten = Math.max(0, result.cursorIndex - this.startIndex);
+    // The preview mirrors the document, so it needs the same targeted edit.
+    await this.emitProgress([], { kind: 'repair', offset, remove, insert });
+  }
+
   /** Best-effort drain used on cancellation, when the main signal is already aborted. */
   private async finalFlushBestEffort(): Promise<void> {
     if (!this.writer || this.buffer.isEmpty) return;
@@ -272,7 +302,7 @@ export class JobRunner {
     }
   }
 
-  private async emitProgress(ops: DocOp[]): Promise<void> {
+  private async emitProgress(ops: DocOp[], extra?: WireOp): Promise<void> {
     const totalChars = this.spec.text.length;
     const pct = totalChars === 0 ? 100 : Math.min(100, (this.charsWritten / totalChars) * 100);
     const elapsedMinutes = Math.max((Date.now() - this.startedAt) / 60_000, 1 / 60_000);
@@ -286,7 +316,7 @@ export class JobRunner {
       charsWritten: this.charsWritten,
       totalChars,
       charsPerMinute,
-      ops: ops as WireOp[],
+      ops: [...(ops as WireOp[]), ...(extra ? [extra] : [])],
     });
 
     await this.persistProgress(false);

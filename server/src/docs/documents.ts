@@ -229,6 +229,17 @@ export class DocWriter {
       return { requestCount: 0, cursorIndex: this.cursor };
     }
 
+    await this.send(requests, options);
+
+    this.cursor = endCursor;
+    return { requestCount: requests.length, cursorIndex: this.cursor };
+  }
+
+  /** One rate-limited, backoff-wrapped batchUpdate. */
+  private async send(
+    requests: docs_v1.Schema$Request[],
+    options: { signal?: AbortSignal; onRetry?: (notice: RetryNotice) => void },
+  ): Promise<void> {
     await this.limiter.acquire(options.signal);
 
     await withBackoff(
@@ -243,8 +254,55 @@ export class DocWriter {
           options.onRetry?.({ attempt, delayMs, status: statusOf(error) }),
       },
     );
+  }
 
-    this.cursor = endCursor;
+  /**
+   * Corrects a mistake left behind earlier in the text.
+   *
+   * `offset` counts from where this job started writing, so the absolute
+   * range is `floor + offset`. Sent as its own batchUpdate — a targeted edit
+   * in the middle of the text cannot be interleaved with appends, whose
+   * indices it would shift, and giving it its own request is also what makes
+   * it land in version history as a distinct correction.
+   *
+   * The caller must have drained the buffer first, or pending appends would be
+   * planned against a stale cursor.
+   */
+  async repair(
+    offset: number,
+    remove: number,
+    insert: string,
+    options: { signal?: AbortSignal; onRetry?: (notice: RetryNotice) => void } = {},
+  ): Promise<FlushResult> {
+    const start = this.floor + offset;
+    const end = start + remove;
+
+    // Refuse to touch anything outside what this job has written.
+    if (remove <= 0 || start < this.floor || end > this.cursor) {
+      throw new Error(
+        `repair(${offset}, ${remove}) targets ${start}-${end}, outside the job's range ${this.floor}-${this.cursor}`,
+      );
+    }
+
+    const requests: docs_v1.Schema$Request[] = [
+      { deleteContentRange: { range: { startIndex: start, endIndex: end } } },
+    ];
+    if (insert) {
+      requests.push({ insertText: { location: { index: start }, text: insert } });
+    }
+
+    const task = this.chain.then(
+      () => this.send(requests, options),
+      () => this.send(requests, options),
+    );
+    this.chain = task.then(
+      () => undefined,
+      () => undefined,
+    );
+
+    await task;
+    // Everything after the repair point shifted by the length difference.
+    this.cursor += insert.length - remove;
     return { requestCount: requests.length, cursorIndex: this.cursor };
   }
 

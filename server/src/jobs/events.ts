@@ -2,7 +2,11 @@ import type { Response } from 'express';
 import type { JobStatus } from '../db/types.js';
 
 /** Op shapes sent to the browser so the preview can mirror the document. */
-export type WireOp = { kind: 'insert'; text: string } | { kind: 'delete'; count: number };
+export type WireOp =
+  | { kind: 'insert'; text: string }
+  | { kind: 'delete'; count: number }
+  /** A correction aimed at an earlier position, not at the end of the text. */
+  | { kind: 'repair'; offset: number; remove: number; insert: string };
 
 export type JobEvent =
   | {

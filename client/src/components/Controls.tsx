@@ -1,25 +1,12 @@
 import { isActive, useJobStore } from '../store/useJobStore';
 import { durationToSlider, formatDuration, formatFinishTime, sliderToDuration } from '../lib/format';
 
-const HUMANNESS_LABELS = [
-  { upTo: 0.05, label: 'Robot' },
-  { upTo: 0.3, label: 'Careful' },
-  { upTo: 0.6, label: 'Human' },
-  { upTo: 0.85, label: 'Very human' },
-  { upTo: 1.01, label: 'Caffeinated' },
-] as const;
-
-function humannessLabel(value: number): string {
-  return HUMANNESS_LABELS.find((entry) => value < entry.upTo)?.label ?? 'Human';
-}
-
 export default function Controls() {
   const durationMs = useJobStore((state) => state.durationMs);
   const minDurationMs = useJobStore((state) => state.minDurationMs);
   const maxDurationMs = useJobStore((state) => state.maxDurationMs);
   const bursts = useJobStore((state) => state.bursts);
   const estimating = useJobStore((state) => state.estimating);
-  const humanness = useJobStore((state) => state.humanness);
   const docMode = useJobStore((state) => state.docMode);
   const docUrlInput = useJobStore((state) => state.docUrlInput);
   const text = useJobStore((state) => state.text);
@@ -27,7 +14,6 @@ export default function Controls() {
   const error = useJobStore((state) => state.error);
 
   const setDurationMs = useJobStore((state) => state.setDurationMs);
-  const setHumanness = useJobStore((state) => state.setHumanness);
   const setDocMode = useJobStore((state) => state.setDocMode);
   const setDocUrlInput = useJobStore((state) => state.setDocUrlInput);
   const startJob = useJobStore((state) => state.startJob);
@@ -99,30 +85,12 @@ export default function Controls() {
         ) : null}
       </div>
 
-      <div>
-        <div className="flex items-baseline justify-between">
-          <label htmlFor="humanness" className="font-mono text-xs uppercase tracking-[0.18em] text-ink-400">
-            Human-ness
-          </label>
-          <span className="font-mono text-xs text-accent-400">{humannessLabel(humanness)}</span>
-        </div>
-        <input
-          id="humanness"
-          type="range"
-          min={0}
-          max={1}
-          step={0.05}
-          value={humanness}
-          disabled={locked}
-          onChange={(event) => setHumanness(Number(event.target.value))}
-          className="mt-3 w-full disabled:opacity-50"
-        />
-        <div className="mt-2 flex justify-between font-mono text-[10px] text-ink-400">
-          <span>Robot</span>
-          <span>Very human</span>
-        </div>
+      <div className="rounded-lg border border-ink-800 bg-ink-850 px-3 py-3">
+        <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-ink-400">How it writes</p>
         <p className="mt-2 text-xs leading-relaxed text-ink-400">
-          Higher settings add hesitation and typos that get caught and corrected mid-word.
+          Hesitation, uneven rhythm and real typos are always on. Mistakes are left in the text and
+          fixed on a later pass — that's what makes them show up in the doc's history the way a
+          person's do.
         </p>
       </div>
 

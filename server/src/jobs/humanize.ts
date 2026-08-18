@@ -24,7 +24,21 @@ export type TypeEvent = { type: 'type'; char: string; delay: number };
 export type BackspaceEvent = { type: 'backspace'; count: number; delay: number };
 /** `rest: true` marks a between-burst gap — the pauses that absorb extra time. */
 export type PauseEvent = { type: 'pause'; duration: number; rest?: true };
-export type HumanEvent = TypeEvent | BackspaceEvent | PauseEvent;
+/**
+ * Going back to fix a typo that was left behind several words ago — the
+ * equivalent of clicking into the middle of a line and correcting it.
+ *
+ * `offset` counts from the start of this job's own text, in the document's
+ * state at the moment the repair happens.
+ */
+export type RepairEvent = {
+  type: 'repair';
+  offset: number;
+  remove: number;
+  insert: string;
+  delay: number;
+};
+export type HumanEvent = TypeEvent | BackspaceEvent | PauseEvent | RepairEvent;
 
 export interface HumanizeOptions {
   /** 0 = metronome, 1 = distractible human (~8% of words get a typo). */
@@ -59,6 +73,13 @@ const CHAR_DELAY_MAX = 140;
 
 /** At humanness = 1, roughly this share of eligible words get a typo. */
 const MAX_TYPO_RATE = 0.08;
+
+/**
+ * The one setting the app ships with. There is no slider: "a bit human" is
+ * not a useful product, and the whole point is that the result reads as a
+ * person every time.
+ */
+export const DEFAULT_HUMANNESS = 0.85;
 
 /** Chance of a mid-word "wait, what was I saying" hesitation. */
 const HESITATION_CHANCE = 0.05;
@@ -216,7 +237,7 @@ function adjacentKey(char: string, rng: Rng): string | null {
 }
 
 export function humanize(text: string, options: HumanizeOptions = {}): HumanEvent[] {
-  const humanness = clamp(options.humanness ?? 0.5, 0, 1);
+  const humanness = clamp(options.humanness ?? DEFAULT_HUMANNESS, 0, 1);
   const minRest = Math.max(0, options.minChunkRestMs ?? DEFAULT_MIN_CHUNK_REST_MS);
   const rng = new Rng(makeRandom(options.seed));
 
@@ -225,6 +246,16 @@ export function humanize(text: string, options: HumanizeOptions = {}): HumanEven
 
   /** Characters typed since the last rest, used to size bursts. */
   let charsThisChunk = 0;
+  /** Net characters this job has put in the document so far. */
+  let writtenLength = 0;
+  /**
+   * A mistake left in the text, waiting to be noticed.
+   *
+   * Only one is outstanding at a time. That keeps the offset arithmetic honest
+   * — a repair shifts every position after it — and matches how people work:
+   * you notice the last thing you got wrong, not four of them at once.
+   */
+  let pendingTypo: { offset: number; remove: number; insert: string } | null = null;
 
   const charDelay = (fast: boolean): number => {
     const base = rng.gaussian(CHAR_DELAY_MEAN, CHAR_DELAY_SD, CHAR_DELAY_MIN, CHAR_DELAY_MAX);
@@ -234,6 +265,7 @@ export function humanize(text: string, options: HumanizeOptions = {}): HumanEven
   const emitChar = (char: string, fast: boolean): void => {
     events.push({ type: 'type', char, delay: charDelay(fast) });
     charsThisChunk += 1;
+    writtenLength += 1;
   };
 
   const emitString = (value: string, fast: boolean): void => {
@@ -249,7 +281,7 @@ export function humanize(text: string, options: HumanizeOptions = {}): HumanEven
    * when the job is stretched over a longer target duration.
    */
   const emitRest = (): void => {
-    if (charsThisChunk === 0) return;
+    if (charsThisChunk === 0 && !pendingTypo) return;
     events.push({
       type: 'pause',
       // A little spread so every gap is not identical.
@@ -257,6 +289,26 @@ export function humanize(text: string, options: HumanizeOptions = {}): HumanEven
       rest: true,
     });
     charsThisChunk = 0;
+    // Coming back to the document is when you reread and spot the mistake.
+    // Fixing it here — after the gap, not a second after making it — is the
+    // whole point: the typo has been sitting in the document long enough for
+    // Docs to have recorded it, so the correction shows up as its own edit.
+    repairPendingTypo();
+  };
+
+  const repairPendingTypo = (): void => {
+    if (!pendingTypo) return;
+    const { offset, remove, insert } = pendingTypo;
+    events.push({
+      type: 'repair',
+      offset,
+      remove,
+      insert,
+      // Reading back, spotting it, moving the cursor there.
+      delay: Math.round(rng.range(600, 2_200)),
+    });
+    writtenLength += insert.length - remove;
+    pendingTypo = null;
   };
 
   const tokens = tokenize(text);
@@ -270,6 +322,11 @@ export function humanize(text: string, options: HumanizeOptions = {}): HumanEven
       typePunctuation(token.value);
     }
   }
+
+  // A mistake made in the last burst still has to be found. Step away, come
+  // back, fix it — which also leaves the job ending on the correction rather
+  // than on raw typing.
+  if (pendingTypo) emitRest();
 
   // Any pause at the very end just delays the job reporting itself finished;
   // there is nothing left to type after it.
@@ -290,7 +347,10 @@ export function humanize(text: string, options: HumanizeOptions = {}): HumanEven
     // last one (that gap belongs to the following punctuation pause).
     const hesitateAt = rng.chance(HESITATION_CHANCE) ? rng.int(0, word.length - 1) : -1;
 
-    const typo = word.length >= 3 && rng.chance(typoRate) ? planTypo(word) : null;
+    // Only one mistake is ever outstanding, so a repair always lands before
+    // the next one is made.
+    const typo =
+      !pendingTypo && word.length >= 4 && rng.chance(typoRate) ? planTypo(word) : null;
 
     if (!typo) {
       for (let i = 0; i < word.length; i++) {
@@ -307,37 +367,22 @@ export function humanize(text: string, options: HumanizeOptions = {}): HumanEven
     }
 
     // 2. The mistake itself. Fingers are already moving, so it comes out fast.
+    const offset = writtenLength;
     emitString(typo.wrong, true);
 
-    // 3. Carry on obliviously for a few characters.
-    const carriedOn = word.slice(typo.at + typo.consumed, typo.at + typo.consumed + typo.noticeAfter);
-    emitString(carriedOn, fast);
+    // 3. A brief stumble — enough to feel the keys go wrong, not enough to
+    //    stop. The correction comes much later.
+    emitPause(rng.range(250, 900));
 
-    // 4. Notice. Hesitate, then rip out everything typed since the mistake.
-    const toDelete = typo.wrong.length + carriedOn.length;
-    events.push({
-      type: 'backspace',
-      count: toDelete,
-      delay: Math.round(rng.range(180, 650)),
-    });
-    charsThisChunk = Math.max(0, charsThisChunk - toDelete);
+    // 4. Carry on and finish the word, and the sentence after it, none the
+    //    wiser. The mistake stays in the document until the next rest.
+    pendingTypo = {
+      offset,
+      remove: typo.wrong.length,
+      insert: word.slice(typo.at, typo.at + typo.consumed),
+    };
 
-    // 5. Retype it correctly, a touch more deliberately than before.
-    const corrected = word.slice(typo.at, typo.at + typo.consumed + carriedOn.length);
-    for (const char of corrected) {
-      events.push({
-        type: 'type',
-        char,
-        delay: Math.max(
-          1,
-          Math.round(rng.gaussian(CHAR_DELAY_MEAN * 1.1, CHAR_DELAY_SD, CHAR_DELAY_MIN, CHAR_DELAY_MAX)),
-        ),
-      });
-      charsThisChunk += 1;
-    }
-
-    // 6. The rest of the word.
-    emitString(word.slice(typo.at + typo.consumed + carriedOn.length), fast);
+    emitString(word.slice(typo.at + typo.consumed), fast);
   }
 
   /**
@@ -345,9 +390,7 @@ export function humanize(text: string, options: HumanizeOptions = {}): HumanEven
    * out as the string `wrong`, and it goes unnoticed for `noticeAfter` more
    * characters.
    */
-  function planTypo(
-    word: string,
-  ): { at: number; consumed: number; wrong: string; noticeAfter: number } | null {
+  function planTypo(word: string): { at: number; consumed: number; wrong: string } | null {
     // Never fumble the very first keystroke — mistakes cluster mid-word.
     const at = rng.int(1, word.length - 1);
     const kinds: TypoKind[] = ['substitute', 'double'];
@@ -382,14 +425,7 @@ export function humanize(text: string, options: HumanizeOptions = {}): HumanEven
       }
     }
 
-    // Sometimes the eye catches it immediately, sometimes three or four
-    // characters go by first.
-    const remaining = word.length - (at + consumed);
-    const noticeAfter = rng.chance(0.45)
-      ? Math.min(remaining, rng.int(0, 1))
-      : Math.min(remaining, rng.int(3, 4));
-
-    return { at, consumed, wrong, noticeAfter };
+    return { at, consumed, wrong };
   }
 
   function typePunctuation(chunk: string): void {
@@ -468,6 +504,7 @@ export function netCharCount(events: HumanEvent[]): number {
   for (const event of events) {
     if (event.type === 'type') total += event.char.length;
     else if (event.type === 'backspace') total -= event.count;
+    else if (event.type === 'repair') total += event.insert.length - event.remove;
   }
   return total;
 }
@@ -479,6 +516,11 @@ export function estimateDurationMs(events: HumanEvent[]): number {
     total += event.type === 'pause' ? event.duration : event.delay;
   }
   return total;
+}
+
+/** How many mistakes the plan leaves in the document and later goes back to fix. */
+export function countRepairs(events: HumanEvent[]): number {
+  return events.filter((event) => event.type === 'repair').length;
 }
 
 /** Number of writing bursts, i.e. how many separate revisions to expect. */

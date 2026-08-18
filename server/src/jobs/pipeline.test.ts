@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { planRequests, type DocOp } from '../docs/documents.js';
 import { TypingBuffer } from './buffer.js';
-import { humanize, type HumanEvent } from './humanize.js';
+import { countRepairs, humanize, type HumanEvent } from './humanize.js';
 
 /**
  * End-to-end check of the write path with the network taken out:
@@ -49,6 +49,8 @@ interface RunResult {
   batchUpdates: number;
   requests: number;
   deleteRequests: number;
+  /** The document body after each write, for inspecting intermediate states. */
+  snapshots: string[];
 }
 
 /**
@@ -70,6 +72,7 @@ function runPipeline(
   let batchUpdates = 0;
   let requests = 0;
   let deleteRequests = 0;
+  const snapshots: string[] = [];
   let elapsed = 0;
   let windowStart = 0;
 
@@ -82,13 +85,42 @@ function runPipeline(
       return;
     }
     doc.apply(planned.requests);
+    snapshots.push(doc.text);
     cursor = planned.endCursor;
     batchUpdates += 1;
     requests += planned.requests.length;
     deleteRequests += planned.requests.filter((request) => request.deleteContentRange).length;
   };
 
+  /**
+   * Mirrors JobRunner.repair: everything pending is written first, then the
+   * correction goes out on its own as a targeted edit inside existing text.
+   */
+  const repair = (offset: number, remove: number, insert: string): void => {
+    flush();
+
+    const start = floor + offset;
+    const edits = [
+      { deleteContentRange: { range: { startIndex: start, endIndex: start + remove } } },
+      ...(insert ? [{ insertText: { location: { index: start }, text: insert } }] : []),
+    ];
+
+    doc.apply(edits);
+    snapshots.push(doc.text);
+    cursor += insert.length - remove;
+    batchUpdates += 1;
+    requests += edits.length;
+    deleteRequests += 1;
+  };
+
   for (const event of events) {
+    if (event.type === 'repair') {
+      elapsed += event.delay;
+      repair(event.offset, event.remove, event.insert);
+      windowStart = elapsed;
+      continue;
+    }
+
     // Mirrors JobRunner: the buffer is flushed before a backspace so the typo
     // is already in the document when the deletion is issued, and before a
     // rest so each burst lands as its own write.
@@ -107,7 +139,7 @@ function runPipeline(
   }
   flush();
 
-  return { finalText: doc.text, batchUpdates, requests, deleteRequests };
+  return { finalText: doc.text, batchUpdates, requests, deleteRequests, snapshots };
 }
 
 const TEXT = [
@@ -182,40 +214,61 @@ describe('write pipeline', () => {
  * sign of a person writing it.
  */
 describe('typo visibility in the document', () => {
-  const countBackspaces = (events: HumanEvent[]): number =>
-    events.filter((event) => event.type === 'backspace').length;
+  it('sends one real deletion per mistake, and ends up exact', () => {
+    let totalRepairs = 0;
 
-  it('turns every correction into a real deletion against stored text', () => {
     for (let seed = 0; seed < 20; seed++) {
       const events = humanize(TEXT, { humanness: 1, minChunkRestMs: 1_000, seed });
-      const backspaces = countBackspaces(events);
-      if (backspaces === 0) continue;
+      const repairs = countRepairs(events);
+      if (repairs === 0) continue;
+      totalRepairs += repairs;
 
       const result = runPipeline(events, { windowMs: 60_000, flushBeforeBackspace: true });
 
       assert.equal(
         result.deleteRequests,
-        backspaces,
-        `seed ${seed}: ${backspaces} corrections produced ${result.deleteRequests} deletions`,
+        repairs,
+        `seed ${seed}: ${repairs} mistakes produced ${result.deleteRequests} deletions`,
       );
       assert.equal(result.finalText, TEXT, `seed ${seed} still has to end up correct`);
     }
+
+    assert.ok(totalRepairs > 0, 'expected the sample text to contain mistakes');
   });
 
-  it('would swallow every correction without the pre-backspace flush', () => {
-    // Documents why the runner flushes before a backspace at all: with a wide
-    // window and no forced flush, corrections vanish into the buffer.
-    let checked = 0;
+  it('leaves the mistake sitting in the document until the correction', () => {
+    // The document must genuinely hold wrong text for a while — that is the
+    // state Google Docs snapshots into version history.
+    let sawMistake = false;
+
     for (let seed = 0; seed < 20; seed++) {
       const events = humanize(TEXT, { humanness: 1, minChunkRestMs: 1_000, seed });
-      if (countBackspaces(events) === 0) continue;
-      checked += 1;
+      if (countRepairs(events) === 0) continue;
 
-      const result = runPipeline(events, { windowMs: 60_000, flushBeforeBackspace: false });
-      assert.equal(result.deleteRequests, 0, `seed ${seed} unexpectedly emitted a deletion`);
-      assert.equal(result.finalText, TEXT);
+      const result = runPipeline(events, { windowMs: 60_000, flushBeforeBackspace: true });
+      // A snapshot that is not a prefix of the final text can only be a typo.
+      if (result.snapshots.some((snapshot) => !TEXT.startsWith(snapshot))) sawMistake = true;
     }
-    assert.ok(checked > 0, 'expected at least one seed with a correction');
+
+    assert.ok(sawMistake, 'no intermediate document state ever contained an uncorrected mistake');
+  });
+
+  it('still folds a same-window backspace away, which is why repairs exist', () => {
+    // The engine no longer emits backspaces, but the planner still merges an
+    // insert and an immediate delete — this is the behaviour that made
+    // on-the-spot corrections invisible and drove the move to repairs.
+    const events: HumanEvent[] = [
+      { type: 'type', char: 't', delay: 100 },
+      { type: 'type', char: 'e', delay: 100 },
+      { type: 'type', char: 'h', delay: 100 },
+      { type: 'backspace', count: 2, delay: 200 },
+      { type: 'type', char: 'h', delay: 100 },
+      { type: 'type', char: 'e', delay: 100 },
+    ];
+
+    const result = runPipeline(events, { windowMs: 60_000, flushBeforeBackspace: false });
+    assert.equal(result.deleteRequests, 0, 'the correction was folded away, as expected');
+    assert.equal(result.finalText, 'the');
   });
 
   it('writes each burst separately so revisions do not merge', () => {

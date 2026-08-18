@@ -1,8 +1,8 @@
 # HumanType
 
-Paste text, pick a pace, and watch it get typed into your Google Doc the way a person would type
-it — variable rhythm, pauses at punctuation, the occasional typo caught three letters later and
-backspaced away.
+Paste text and watch it get written into your Google Doc the way a person would write it — in
+sittings minutes apart, with uneven rhythm, pauses at punctuation, and typos left in the text until
+a later pass catches them. The doc's version history reads as written, not pasted.
 
 ```
 client/   Vite + React + TypeScript + Tailwind + Zustand
@@ -84,11 +84,12 @@ type HumanEvent =
   | { type: 'type';      char: string;  delay: number }
   | { type: 'backspace'; count: number; delay: number }
   | { type: 'pause';     duration: number; rest?: true }
+  | { type: 'repair';    offset: number; remove: number; insert: string; delay: number }
 ```
 
 | Input              | Effect                                                              |
 | ------------------ | ------------------------------------------------------------------- |
-| `humanness`        | 0 = no mistakes ever; 1 ≈ 8% of words get a typo.                   |
+| `humanness`        | 0 = no mistakes ever; 1 ≈ 8% of words get a typo. Fixed at 0.85 in the app. |
 | `targetDurationMs` | Wall-clock time for the whole job. Below the natural minimum it is ignored. |
 | `minChunkRestMs`   | Shortest gap between writing bursts. 60s in production.             |
 
@@ -116,15 +117,38 @@ plus one minimum rest per seam — and a job can never be scheduled faster. A
 
 ### Making typos visible
 
-A typo is only convincing if the document actually held the mistake for a
-while. Since the planner merges an insert and a delete that land in the same
-flush window, a correction typed 400ms after the mistake would vanish before
-Google ever saw it.
+This took two attempts, and the first one was not enough.
 
-The runner therefore forces a flush *before* every backspace, so the misspelling
-is committed to the document first and the correction arrives as a genuine
-`deleteContentRange` against stored text. It also flushes before each rest, so
-a burst lands as one complete write rather than being split across the gap.
+A typo corrected a second after it happens is invisible in version history no
+matter how it is transmitted, because Docs folds both edits into one revision.
+Sending the mistake as its own API call does not help. **The mistake has to
+still be in the document when Docs takes its next snapshot.**
+
+So mistakes are not corrected on the spot at all. The engine fumbles a word,
+carries on to the end of the word and the sentence, and leaves the error
+sitting there. At the next rest — after a minute or more of nothing — it goes
+back and fixes it with a targeted edit at that position, the way a person
+rereads a paragraph and clicks into a word:
+
+```
+ 1.3m  REST  doc now: ..."dly, without ever complaining about the arrangement."
+ 2.6m  REST  doc now: ..."r that afternoon the dog finally responded in kindd."
+ 2.6m  FIX   "onded in kindd." -> "onded in kind."
+```
+
+That is a `repair` event: `{ offset, remove, insert }`, an offset from the
+start of the job's own text. `DocWriter.repair()` sends it as its own
+`batchUpdate` — a `deleteContentRange` plus an `insertText` at that index —
+after the append buffer has been drained, since a mid-text edit shifts every
+index after it.
+
+Only one mistake is ever outstanding. That keeps the offset arithmetic honest
+and matches how people work: you fix the last thing you got wrong, not four at
+once. A mistake made in the final burst still gets found — the engine adds a
+closing rest so it can come back to it.
+
+There is no humanness slider. `DEFAULT_HUMANNESS` is a single tuned constant,
+because "slightly human" is not a useful setting.
 
 - **Base rhythm:** 60–140ms per character, gaussian-distributed (Box–Muller, clamped).
 - **Pauses:** comma/semicolon/colon 150–400ms; `.` `!` `?` 400ms–1.2s;
@@ -132,9 +156,8 @@ a burst lands as one complete write rather than being split across the gap.
   hesitation.
 - **Common words** (`the and is to a of in`) come out 30% faster, as a single burst.
 - **Typos** are modelled three ways: wrong-key substitution from a full QWERTY adjacency map,
-  transposition (`teh`, `hte`), and doubled letters. The catch delay varies — sometimes noticed
-  immediately, sometimes three or four characters later — and the correction backspaces everything
-  typed since the mistake, then retypes it slightly more deliberately.
+  transposition (`teh`, `hte`), and doubled letters. They are left in the text and repaired at the
+  next rest, not backspaced on the spot — see *Making typos visible*.
 
 The engine guarantees the replayed event stream reproduces the input **exactly**. This is
 property-tested over hundreds of seeds and the full humanness and duration range.
@@ -239,8 +262,8 @@ Without `DATABASE_URL` those tests skip automatically.
 | `GET`    | `/auth/google/callback`  | Upserts the user, sets the session, redirects to `/app`.   |
 | `GET`    | `/auth/logout`           | Destroys the session and redirects. `POST` returns JSON.   |
 | `GET`    | `/api/me`                | Current user, or `401`.                                    |
-| `POST`   | `/api/estimate`          | `{ text, humanness }` → minimum duration + burst count.     |
-| `POST`   | `/api/jobs`              | `{ text, humanness, durationMs?, docId? }` → `{ jobId, docUrl }`. |
+| `POST`   | `/api/estimate`          | `{ text }` → minimum duration, burst count, typo count.     |
+| `POST`   | `/api/jobs`              | `{ text, durationMs?, docId? }` → `{ jobId, docUrl }`.      |
 | `GET`    | `/api/jobs`              | Recent jobs for the signed-in user.                        |
 | `GET`    | `/api/jobs/:id`          | Poll job status.                                           |
 | `GET`    | `/api/jobs/:id/stream`   | SSE: `snapshot`, `progress`, `status`, `retry`, `done`, `error`. |

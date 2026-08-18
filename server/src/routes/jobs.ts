@@ -13,7 +13,14 @@ import {
 } from '../docs/documents.js';
 import { getChannel, peekChannel } from '../jobs/events.js';
 import { jobQueue } from '../jobs/queue.js';
-import { countBursts, estimateDurationMs, humanize, minimumDurationMs } from '../jobs/humanize.js';
+import {
+  countBursts,
+  countRepairs,
+  DEFAULT_HUMANNESS,
+  estimateDurationMs,
+  humanize,
+  minimumDurationMs,
+} from '../jobs/humanize.js';
 import { hasActiveSubscription, isAuthenticated } from '../middleware/isAuthenticated.js';
 import { HttpError } from '../middleware/errorHandler.js';
 
@@ -29,14 +36,16 @@ const createJobSchema = z.object({
    * faster than a person is what made documents look pasted.
    */
   durationMs: z.coerce.number().positive().max(config.jobs.maxJobDurationMs).optional(),
-  humanness: z.coerce.number().min(0).max(1).default(0.5),
+  // No longer surfaced in the UI: the app always writes at its tuned setting.
+  humanness: z.coerce.number().min(0).max(1).default(DEFAULT_HUMANNESS),
   // Accepts a full Google Docs URL or a bare document ID.
   docId: z.string().trim().min(1).optional(),
 });
 
 const estimateSchema = z.object({
   text: z.string().min(1, 'Text is required'),
-  humanness: z.coerce.number().min(0).max(1).default(0.5),
+  // No longer surfaced in the UI: the app always writes at its tuned setting.
+  humanness: z.coerce.number().min(0).max(1).default(DEFAULT_HUMANNESS),
 });
 
 /** Planning options shared by the estimate endpoint and job creation. */
@@ -79,6 +88,7 @@ jobsRouter.post(
     res.json({
       minDurationMs: estimateDurationMs(plan),
       bursts: countBursts(plan),
+      typos: countRepairs(plan),
       totalChars: text.length,
       maxDurationMs: config.jobs.maxJobDurationMs,
     });
@@ -161,6 +171,7 @@ jobsRouter.post(
       estimatedMs: estimateDurationMs(plan),
       minDurationMs,
       bursts: countBursts(plan),
+      typos: countRepairs(plan),
     });
   }),
 );
