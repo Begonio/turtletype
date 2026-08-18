@@ -1,5 +1,6 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { isTerminal, useJobStore, type Phase } from '../store/useJobStore';
+import { formatDuration, formatFinishTime } from '../lib/format';
 
 const PHASE_COPY: Record<Phase, { label: string; tone: string }> = {
   idle: { label: 'Idle', tone: 'text-ink-400' },
@@ -29,7 +30,26 @@ export default function ProgressPanel() {
   const cancelJob = useJobStore((state) => state.cancelJob);
   const resetJob = useJobStore((state) => state.resetJob);
 
+  const remainingMs = useJobStore((state) => state.remainingMs);
+  const remainingAt = useJobStore((state) => state.remainingAt);
+  const resting = useJobStore((state) => state.resting);
+
   const previewRef = useRef<HTMLPreElement>(null);
+
+  // The server only reports in every few seconds, so tick the countdown down
+  // locally between updates. Measuring from when the value arrived avoids
+  // trusting the browser's clock to agree with the server's.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (remainingAt === null) return;
+    const timer = setInterval(() => setNow(Date.now()), 1_000);
+    return () => clearInterval(timer);
+  }, [remainingAt]);
+
+  const liveRemainingMs =
+    remainingMs === null || remainingAt === null
+      ? null
+      : Math.max(0, remainingMs - (phase === 'paused' ? 0 : now - remainingAt));
 
   // Follow the text as it arrives, the way a terminal does.
   useEffect(() => {
@@ -59,6 +79,26 @@ export default function ProgressPanel() {
           <span className="text-ink-300">{charsPerMinute.toLocaleString()} chars/min</span>
         </div>
       </header>
+
+      {!finished && liveRemainingMs !== null ? (
+        <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-ink-800 px-4 py-3">
+          <div className="flex items-baseline gap-2">
+            <span className="font-mono text-2xl text-ink-200 tabular-nums">
+              {formatDuration(liveRemainingMs)}
+            </span>
+            <span className="text-xs text-ink-400">
+              {liveRemainingMs === 0 ? 'finishing up' : 'left'}
+            </span>
+          </div>
+          <span className="font-mono text-xs text-ink-400">
+            {resting && phase === 'running' ? (
+              <span className="text-amber-300">thinking — next burst shortly</span>
+            ) : (
+              <>done around {formatFinishTime(liveRemainingMs)}</>
+            )}
+          </span>
+        </div>
+      ) : null}
 
       <div className="px-4 pt-4">
         <div className="h-1.5 w-full overflow-hidden rounded-full bg-ink-800">

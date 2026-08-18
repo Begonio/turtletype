@@ -61,7 +61,7 @@ export function createApp(): express.Express {
 
   app.use(
     session({
-      name: 'humantype.sid',
+      name: 'turtletype.sid',
       store: new PgSession({ pool, tableName: 'session', createTableIfMissing: false }),
       secret: config.sessionSecret,
       resave: false,
@@ -109,7 +109,7 @@ export function createApp(): express.Express {
 }
 
 async function main(): Promise<void> {
-  console.log(`[boot] starting HumanType (${config.nodeEnv}), port ${config.port}`);
+  console.log(`[boot] starting TurtleType (${config.nodeEnv}), port ${config.port}`);
 
   // Fail loudly at boot rather than on the first request that needs a secret.
   assertRequiredEnv();
@@ -128,7 +128,7 @@ async function main(): Promise<void> {
   // Bind on all interfaces explicitly: a platform's health check reaches the
   // container over its private network, not loopback.
   const server = app.listen(config.port, '0.0.0.0', () => {
-    console.log(`[boot] HumanType API listening on 0.0.0.0:${config.port} (${config.nodeEnv})`);
+    console.log(`[boot] TurtleType API listening on 0.0.0.0:${config.port} (${config.nodeEnv})`);
     console.log(`[boot] health check at /health, client origin ${config.clientUrl}`);
     console.log(`[boot] flush interval ${config.jobs.flushIntervalMs}ms, ` +
       `write ceiling ${config.jobs.writesPerMinute}/min/job`);

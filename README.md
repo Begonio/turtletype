@@ -1,4 +1,4 @@
-# HumanType
+# TurtleType
 
 Paste text and watch it get written into your Google Doc the way a person would write it — in
 sittings minutes apart, with uneven rhythm, pauses at punctuation, and typos left in the text until
@@ -18,7 +18,7 @@ This is the constraint the whole backend is designed around, so it is worth stat
 **The Google Docs API allows roughly 60 write requests per minute, per document.** A naive
 implementation sends one `batchUpdate` per character and dies in the first second.
 
-HumanType never does that:
+TurtleType never does that:
 
 1. **`humanize.ts` is pure.** It converts text into a flat array of `type` / `backspace` / `pause`
    events with millisecond delays. It performs no I/O and makes no API calls. An entire document is
@@ -183,7 +183,7 @@ property-tested over hundreds of seeds and the full humanness and duration range
      match `GOOGLE_CALLBACK_URL` character for character.
 5. Copy the client ID and secret into `.env`.
 
-> The `documents` scope lets HumanType edit a document you point it at. It does not grant Drive
+> The `documents` scope lets TurtleType edit a document you point it at. It does not grant Drive
 > access, so the app cannot list or open files you did not give it.
 
 ### 2. PostgreSQL
@@ -191,9 +191,9 @@ property-tested over hundreds of seeds and the full humanness and duration range
 Any Postgres 13+ instance works (13+ is needed for the built-in `gen_random_uuid()`).
 
 ```bash
-createdb humantype
-# or: docker run -d --name humantype-pg -p 5432:5432 \
-#       -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=humantype postgres:16
+createdb turtletype
+# or: docker run -d --name turtletype-pg -p 5432:5432 \
+#       -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=turtletype postgres:16
 ```
 
 Set `DATABASE_URL`, then:

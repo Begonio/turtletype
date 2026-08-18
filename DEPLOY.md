@@ -1,4 +1,4 @@
-# Deploying HumanType to type.turtlegames.org
+# Deploying TurtleType to type.turtlegames.org
 
 The app is a single service: the Node server serves the API **and** the built
 React app from the same origin. That is deliberate — one origin means the
@@ -131,7 +131,7 @@ TRUST_PROXY=2
 
 ```bash
 docker compose up -d
-docker compose logs -f app     # expect: [boot] HumanType API listening on :8080
+docker compose logs -f app     # expect: [boot] TurtleType API listening on :8080
 ```
 
 Ports 80 and 443 must be open. Caddy fetches a Let's Encrypt certificate on
@@ -227,7 +227,7 @@ privacy policy URL, a terms URL, a homepage on `turtlegames.org`, and a demo
 video showing why the app needs Docs access. Verification typically takes a few
 days to a few weeks, so start it early if you plan to open this beyond yourself.
 
-If HumanType is only ever for you and a handful of people, staying in Testing is
+If TurtleType is only ever for you and a handful of people, staying in Testing is
 fine — just expect the weekly re-consent.
 
 ---
@@ -258,7 +258,7 @@ is not compressing the stream.
 | Signs in, bounces back to the landing page | Cookie rejected. Check SSL/TLS is **Full (strict)**, not Flexible. |
 | Redirect loop | Same — Flexible SSL mode. |
 | Build succeeds, **`Network > Healthcheck` fails** | The container booted and exited. Open the **Deploy** log (not Build): a `[boot] FAILED TO START:` line names the cause. Usually a missing variable or an unreachable `DATABASE_URL`. |
-| Railway created two services named `@humantype/client` and `@humantype/server` | It split the npm workspaces. Delete both, create one service with **Root Directory `/`** and **Builder: Dockerfile**. This app is a single service by design. |
+| Railway created two services named `@turtletype/client` and `@turtletype/server` | It split the npm workspaces. Delete both, create one service with **Root Directory `/`** and **Builder: Dockerfile**. This app is a single service by design. |
 | `502` / `Bad gateway` | App container not up. `docker compose logs app` or the host's log tab. |
 | Preview empty, doc still fills | SSE buffered by a proxy. |
 | Jobs die after 7 days for a user | The Testing-mode refresh token expiry above. |
@@ -277,7 +277,7 @@ is not compressing the stream.
   marked `running` at the next boot is marked failed with an explanatory message.
   Deploy when nobody is mid-document.
 - **Backups.** Railway and Render both offer automated Postgres backups; on a
-  VPS, `docker compose exec db pg_dump -U humantype humantype` on a cron.
+  VPS, `docker compose exec db pg_dump -U turtletype turtletype` on a cron.
 - **Tokens at rest.** OAuth access and refresh tokens are stored as plain columns
   in `users`. If this ever serves people other than you, encrypt them with a
   KMS-managed key before launch.

@@ -16,6 +16,10 @@ export type JobEvent =
       charsWritten: number;
       totalChars: number;
       charsPerMinute: number;
+      /** Plan time left, in ms. Absent until the plan has been built. */
+      remainingMs?: number;
+      /** True during a between-burst gap, when nothing is being written. */
+      resting: boolean;
       ops: WireOp[];
     }
   | { type: 'status'; status: JobStatus; docUrl?: string | null }

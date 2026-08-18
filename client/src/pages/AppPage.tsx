@@ -74,7 +74,7 @@ export default function AppPage() {
       <header className="border-b border-ink-800">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
           <Link to="/" className="font-mono text-sm tracking-tight text-ink-200">
-            human<span className="text-accent-500">type</span>
+            turtle<span className="text-accent-500">type</span>
           </Link>
           <div className="flex items-center gap-4">
             <span className="hidden text-xs text-ink-400 sm:inline">{user.email}</span>

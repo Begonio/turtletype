@@ -69,7 +69,7 @@ export default function Controls() {
           </p>
         ) : (
           <p className="mt-3 text-xs leading-relaxed text-ink-400">
-            Paste some text and HumanType works out the shortest believable schedule for it.
+            Paste some text and TurtleType works out the shortest believable schedule for it.
           </p>
         )}
 

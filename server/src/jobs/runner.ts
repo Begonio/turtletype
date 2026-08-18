@@ -6,7 +6,7 @@ import { DocWriter, getAppendIndex, type DocOp } from '../docs/documents.js';
 import { sleep } from '../docs/rateLimiter.js';
 import { statusOf } from '../docs/backoff.js';
 import { emitJobEvent, type WireOp } from './events.js';
-import { humanize, type HumanEvent } from './humanize.js';
+import { estimateDurationMs, humanize, type HumanEvent } from './humanize.js';
 import { TypingBuffer } from './buffer.js';
 
 export class JobCancelledError extends Error {
@@ -32,6 +32,9 @@ export interface JobSpec {
 
 /** How often job progress is written back to Postgres (flushes are far more frequent). */
 const DB_PROGRESS_INTERVAL_MS = 2_000;
+
+/** How often a resting job reports in, so the UI and the countdown stay alive. */
+const HEARTBEAT_INTERVAL_MS = 5_000;
 
 /**
  * Replays a humanized event sequence against a Google Doc.
@@ -60,6 +63,22 @@ export class JobRunner {
   private charsWritten = 0;
   private startedAt = 0;
   private lastDbWrite = 0;
+
+  /**
+   * Countdown bookkeeping, measured against the plan rather than the clock.
+   *
+   * Extrapolating from characters-per-minute would be badly wrong here: most
+   * of a job's wall-clock time is spent resting, so a rate-based estimate
+   * swings wildly between "nearly done" mid-burst and "hours left" mid-rest.
+   * The plan already knows exactly how much time is left in it.
+   */
+  private planTotalMs = 0;
+  private planElapsedMs = 0;
+  /** The sleep currently in progress, so the countdown moves between events. */
+  private sleepStartedAt = 0;
+  private sleepDurationMs = 0;
+  private resting = false;
+  private lastEmitAt = 0;
 
   constructor(readonly spec: JobSpec) {}
 
@@ -95,6 +114,36 @@ export class JobRunner {
     // rather than sitting in a pause gate.
     this.resume();
     this.controller.abort(new JobCancelledError());
+  }
+
+  /**
+   * Sleeps out one event's delay, keeping the countdown moving while it waits.
+   * Without this the estimate would sit still for a whole 20-minute rest and
+   * then jump.
+   */
+  private async timedSleep(durationMs: number): Promise<void> {
+    this.sleepStartedAt = Date.now();
+    this.sleepDurationMs = durationMs;
+    try {
+      await sleep(durationMs, this.controller.signal);
+    } finally {
+      this.planElapsedMs += durationMs;
+      this.sleepStartedAt = 0;
+      this.sleepDurationMs = 0;
+    }
+  }
+
+  /** Milliseconds of plan left to replay, or null before the plan is known. */
+  private remainingMs(): number | null {
+    if (this.planTotalMs === 0) return null;
+
+    let elapsed = this.planElapsedMs;
+    if (this.sleepStartedAt > 0) {
+      // A sleep in progress is genuinely elapsing, paused or not — a pause
+      // only takes effect between events.
+      elapsed += Math.min(this.sleepDurationMs, Date.now() - this.sleepStartedAt);
+    }
+    return Math.max(0, Math.round(this.planTotalMs - elapsed));
   }
 
   /** Blocks the replay loop while the job is paused. */
@@ -196,6 +245,9 @@ export class JobRunner {
    * the product.
    */
   private async replay(events: HumanEvent[]): Promise<void> {
+    this.planTotalMs = estimateDurationMs(events);
+    this.planElapsedMs = 0;
+
     for (const event of events) {
       await this.waitWhilePaused();
       if (this.controller.signal.aborted) throw this.controller.signal.reason;
@@ -204,8 +256,12 @@ export class JobRunner {
         // Land the burst before a long rest, so the document holds a complete
         // thought for the whole gap. This is what gives version history a
         // separate, human-looking revision per burst instead of one blob.
-        if (event.rest) await this.flushOnce();
-        await sleep(event.duration, this.controller.signal);
+        if (event.rest) {
+          await this.flushOnce();
+          this.resting = true;
+        }
+        await this.timedSleep(event.duration);
+        this.resting = false;
         continue;
       }
 
@@ -213,7 +269,7 @@ export class JobRunner {
         // Everything typed so far has to be in the document before an edit is
         // aimed at a position inside it.
         await this.flushOnce();
-        await sleep(event.delay, this.controller.signal);
+        await this.timedSleep(event.delay);
         await this.repair(event.offset, event.remove, event.insert);
         continue;
       }
@@ -228,7 +284,7 @@ export class JobRunner {
         await this.flushOnce();
       }
 
-      await sleep(event.delay, this.controller.signal);
+      await this.timedSleep(event.delay);
 
       this.buffer.push(event);
     }
@@ -244,6 +300,13 @@ export class JobRunner {
       // final drain from handleFailure; anything else is a hard stop.
       await sleep(config.jobs.flushIntervalMs, this.controller.signal);
       await this.flushOnce();
+
+      // Most of a job is spent resting, during which nothing is written and no
+      // progress event would otherwise fire. Without a heartbeat the UI looks
+      // frozen for twenty minutes at a time and the countdown goes stale.
+      if (Date.now() - this.lastEmitAt >= HEARTBEAT_INTERVAL_MS) {
+        await this.emitProgress([]);
+      }
     }
   }
 
@@ -308,6 +371,8 @@ export class JobRunner {
     const elapsedMinutes = Math.max((Date.now() - this.startedAt) / 60_000, 1 / 60_000);
     const charsPerMinute = Math.round(this.charsWritten / elapsedMinutes);
     const status: JobStatus = this.paused ? 'paused' : 'running';
+    const remainingMs = this.remainingMs();
+    this.lastEmitAt = Date.now();
 
     emitJobEvent(this.spec.jobId, {
       type: 'progress',
@@ -316,6 +381,8 @@ export class JobRunner {
       charsWritten: this.charsWritten,
       totalChars,
       charsPerMinute,
+      resting: this.resting,
+      ...(remainingMs === null ? {} : { remainingMs }),
       ops: [...(ops as WireOp[]), ...(extra ? [extra] : [])],
     });
 

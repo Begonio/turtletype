@@ -50,7 +50,7 @@ function destroySession(req: Request, res: Response, done: () => void): void {
     if (logoutErr) console.error('[auth] logout error:', logoutErr);
     req.session.destroy((destroyErr) => {
       if (destroyErr) console.error('[auth] session destroy error:', destroyErr);
-      res.clearCookie('humantype.sid');
+      res.clearCookie('turtletype.sid');
       done();
     });
   });

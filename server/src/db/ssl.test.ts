@@ -16,9 +16,9 @@ describe('resolveSslOptions', () => {
   });
 
   it('does not ask for TLS for a Compose service or a local database', () => {
-    assert.equal(resolveSslOptions('postgres://humantype:pw@db:5432/humantype'), undefined);
-    assert.equal(resolveSslOptions('postgres://postgres:postgres@localhost:5432/humantype'), undefined);
-    assert.equal(resolveSslOptions('postgres://postgres:postgres@127.0.0.1:5432/humantype'), undefined);
+    assert.equal(resolveSslOptions('postgres://turtletype:pw@db:5432/turtletype'), undefined);
+    assert.equal(resolveSslOptions('postgres://postgres:postgres@localhost:5432/turtletype'), undefined);
+    assert.equal(resolveSslOptions('postgres://postgres:postgres@127.0.0.1:5432/turtletype'), undefined);
   });
 
   it('uses relaxed TLS for managed Postgres over the public internet', () => {
@@ -27,7 +27,7 @@ describe('resolveSslOptions', () => {
       relaxed,
     );
     assert.deepEqual(
-      resolveSslOptions('postgres://u:p@dpg-abc123-a.frankfurt-postgres.render.com/humantype'),
+      resolveSslOptions('postgres://u:p@dpg-abc123-a.frankfurt-postgres.render.com/turtletype'),
       relaxed,
     );
     assert.deepEqual(

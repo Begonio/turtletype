@@ -29,6 +29,10 @@ interface JobStore {
   /** Separate writing sessions the plan will produce, i.e. expected revisions. */
   bursts: number;
   estimating: boolean;
+  /** Plan time left when the last progress event arrived, and when that was. */
+  remainingMs: number | null;
+  remainingAt: number | null;
+  resting: boolean;
   /** Characters that have scrolled off the front of the preview. */
   previewDropped: number;
   docMode: DocMode;
@@ -125,6 +129,9 @@ export const useJobStore = create<JobStore>()(
       maxDurationMs: 24 * 60 * 60 * 1_000,
       bursts: 0,
       estimating: false,
+      remainingMs: null,
+      remainingAt: null,
+      resting: false,
       previewDropped: 0,
       docMode: 'new',
       docUrlInput: '',
@@ -227,6 +234,9 @@ export const useJobStore = create<JobStore>()(
           totalChars: text.length,
           docUrl: null,
           estimatedMs: null,
+          remainingMs: null,
+          remainingAt: null,
+          resting: false,
         });
 
         try {
@@ -333,6 +343,8 @@ export const useJobStore = create<JobStore>()(
             charsWritten: number;
             totalChars: number;
             charsPerMinute: number;
+            remainingMs?: number;
+            resting: boolean;
             ops: WireOp[];
           };
           set((state) => ({
@@ -343,6 +355,11 @@ export const useJobStore = create<JobStore>()(
             charsWritten: data.charsWritten,
             totalChars: data.totalChars,
             charsPerMinute: data.charsPerMinute,
+            resting: data.resting,
+            // Stamped on arrival so the client can tick it down locally without
+            // trusting the two clocks to agree.
+            remainingMs: data.remainingMs ?? null,
+            remainingAt: data.remainingMs === undefined ? null : Date.now(),
             ...applyOps(state.preview, state.previewDropped, data.ops),
             notice: null,
           }));
@@ -425,6 +442,9 @@ export const useJobStore = create<JobStore>()(
           charsWritten: 0,
           charsPerMinute: 0,
           estimatedMs: null,
+          remainingMs: null,
+          remainingAt: null,
+          resting: false,
           preview: '',
           previewDropped: 0,
           error: null,
@@ -433,7 +453,7 @@ export const useJobStore = create<JobStore>()(
       },
     }),
     {
-      name: 'humantype',
+      name: 'turtletype',
       // A half-typed 40k paste should survive an accidental refresh, and a
       // running job should be re-attachable. Nothing else is worth keeping.
       partialize: (state) => ({

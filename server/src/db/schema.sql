@@ -1,4 +1,4 @@
--- HumanType schema. Safe to run repeatedly.
+-- TurtleType schema. Safe to run repeatedly.
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 

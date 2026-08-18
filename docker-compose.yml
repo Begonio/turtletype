@@ -1,4 +1,4 @@
-# Self-hosted HumanType: app + Postgres + Caddy for TLS.
+# Self-hosted TurtleType: app + Postgres + Caddy for TLS.
 #
 #   cp .env.example .env      # fill in the Google credentials and secrets
 #   docker compose up -d
@@ -12,13 +12,13 @@ services:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-humantype}
+      POSTGRES_USER: ${POSTGRES_USER:-turtletype}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
-      POSTGRES_DB: ${POSTGRES_DB:-humantype}
+      POSTGRES_DB: ${POSTGRES_DB:-turtletype}
     volumes:
       - db-data:/var/lib/postgresql/data
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-humantype} -d ${POSTGRES_DB:-humantype}']
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-turtletype} -d ${POSTGRES_DB:-turtletype}']
       interval: 10s
       timeout: 5s
       retries: 5
@@ -35,7 +35,7 @@ services:
     environment:
       NODE_ENV: production
       PORT: 8080
-      DATABASE_URL: postgres://${POSTGRES_USER:-humantype}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-humantype}?sslmode=disable
+      DATABASE_URL: postgres://${POSTGRES_USER:-turtletype}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-turtletype}?sslmode=disable
       SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:?set GOOGLE_CLIENT_ID in .env}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:?set GOOGLE_CLIENT_SECRET in .env}

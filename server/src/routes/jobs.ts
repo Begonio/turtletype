@@ -63,7 +63,7 @@ function wrap(handler: (req: Request, res: Response, next: NextFunction) => Prom
 function documentTitle(text: string): string {
   const firstLine = text.split('\n').find((line) => line.trim().length > 0)?.trim() ?? '';
   if (!firstLine) {
-    return `HumanType — ${new Date().toLocaleDateString('en-US')}`;
+    return `TurtleType — ${new Date().toLocaleDateString('en-US')}`;
   }
   return firstLine.length > 60 ? `${firstLine.slice(0, 57)}…` : firstLine;
 }
