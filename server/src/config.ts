@@ -142,6 +142,15 @@ export const config = {
     writesPerMinute: num('DOCS_WRITES_PER_MINUTE', 55),
     maxConcurrentJobs: num('MAX_CONCURRENT_JOBS', 20),
     maxTextLength: num('MAX_TEXT_LENGTH', 200_000),
+    /**
+     * Shortest gap between writing bursts. Google Docs folds edits that happen
+     * close together into a single revision, so a document written with no
+     * gaps shows up in version history as one entry — identical to a paste.
+     * A minute is enough for Docs to record each burst separately.
+     */
+    minChunkRestMs: num('MIN_CHUNK_REST_MS', 60_000),
+    /** Longest a single job may be stretched over. */
+    maxJobDurationMs: num('MAX_JOB_DURATION_MS', 24 * 60 * 60 * 1_000),
   },
 
   backoff: {

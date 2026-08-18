@@ -18,6 +18,9 @@ import type { AddressInfo } from 'node:net';
 process.env.BACKOFF_INITIAL_MS = '25';
 process.env.BACKOFF_MAX_MS = '200';
 process.env.FLUSH_INTERVAL_MS = process.env.FLUSH_INTERVAL_MS ?? '300';
+// Bursts still happen, just seconds apart instead of a minute, so the suite
+// exercises the rest path without taking minutes of wall clock.
+process.env.MIN_CHUNK_REST_MS = process.env.MIN_CHUNK_REST_MS ?? '400';
 process.env.GOOGLE_CLIENT_ID ??= 'test-client-id';
 process.env.GOOGLE_CLIENT_SECRET ??= 'test-client-secret';
 process.env.GOOGLE_CALLBACK_URL ??= 'http://localhost:8080/auth/google/callback';
@@ -28,8 +31,21 @@ class FakeDoc {
   body = '';
   batchUpdates = 0;
   requests = 0;
+  /** deleteContentRange operations received — i.e. visible typo corrections. */
+  deletes = 0;
+  /** Every intermediate body, so a test can see the typo before its correction. */
+  snapshots: string[] = [];
   /** Number of upcoming batchUpdate calls to answer with a 429. */
   failWith429 = 0;
+
+  reset(): void {
+    this.body = '';
+    this.batchUpdates = 0;
+    this.requests = 0;
+    this.deletes = 0;
+    this.snapshots = [];
+    this.failWith429 = 0;
+  }
 
   get endIndex(): number {
     // Every document body ends with a newline that cannot be written after.
@@ -47,10 +63,12 @@ class FakeDoc {
         const end = request.deleteContentRange.range.endIndex - 1;
         assert.ok(start >= 0 && end <= this.body.length && start < end, `delete ${start}-${end} out of range`);
         this.body = this.body.slice(0, start) + this.body.slice(end);
+        this.deletes += 1;
       }
       this.requests += 1;
     }
     this.batchUpdates += 1;
+    this.snapshots.push(this.body);
   }
 }
 
@@ -189,7 +207,7 @@ describe('job runner integration', { skip: databaseUrl ? false : 'DATABASE_URL i
       docId: 'fake-doc',
       docUrl: 'https://docs.google.com/document/d/fake-doc/edit',
       text: TEXT,
-      speed: 4,
+      targetDurationMs: 0,
       humanness: 1,
     }).run();
 
@@ -211,6 +229,50 @@ describe('job runner integration', { skip: databaseUrl ? false : 'DATABASE_URL i
     );
   });
 
+  /**
+   * The failure that motivated all of this: a document written in one go shows
+   * up in Google Docs' version history as a single revision, indistinguishable
+   * from a paste. These two assertions are the fix — the document is built up
+   * over many separate writes, and mistakes really do appear in it before
+   * being corrected.
+   */
+  it('builds the document over many writes, with typos visible before correction', async (t) => {
+    if (!reachable) return t.skip('Postgres unreachable');
+    doc.reset();
+
+    // Long enough to contain several sentence seams, so bursts actually occur.
+    const longText = `${TEXT} ${TEXT} ${TEXT} ${TEXT}`;
+    const jobId = await createJobRow(longText.length);
+
+    await new JobRunner({
+      jobId,
+      userId,
+      docId: 'fake-doc',
+      docUrl: null,
+      text: longText,
+      targetDurationMs: 0,
+      humanness: 1,
+      seed: 5,
+    }).run();
+
+    assert.equal(doc.body, longText, 'the finished document must still be exact');
+
+    assert.ok(
+      doc.batchUpdates > 5,
+      `a paste is one write; this produced only ${doc.batchUpdates}`,
+    );
+    assert.ok(
+      doc.deletes > 0,
+      'expected at least one correction to reach the document as a deletion',
+    );
+
+    // At some point the stored document must have held text that is NOT a
+    // prefix of the final text — that is the typo, sitting in the document,
+    // exactly as a human would have left it before noticing.
+    const hadVisibleMistake = doc.snapshots.some((snapshot) => !longText.startsWith(snapshot));
+    assert.ok(hadVisibleMistake, 'no intermediate state contained an uncorrected typo');
+  });
+
   it('appends after existing content without disturbing it', async (t) => {
     if (!reachable) return t.skip('Postgres unreachable');
     const existing = 'Already in the document.\n';
@@ -224,7 +286,7 @@ describe('job runner integration', { skip: databaseUrl ? false : 'DATABASE_URL i
       docId: 'fake-doc',
       docUrl: null,
       text: TEXT,
-      speed: 4,
+      targetDurationMs: 0,
       humanness: 1,
     }).run();
 
@@ -252,7 +314,7 @@ describe('job runner integration', { skip: databaseUrl ? false : 'DATABASE_URL i
       docId: 'fake-doc',
       docUrl: null,
       text: TEXT,
-      speed: 4,
+      targetDurationMs: 0,
       humanness: 1,
     }).run();
 
@@ -274,7 +336,7 @@ describe('job runner integration', { skip: databaseUrl ? false : 'DATABASE_URL i
       docId: 'fake-doc',
       docUrl: null,
       text: longText,
-      speed: 4,
+      targetDurationMs: 0,
       humanness: 1,
     });
 
@@ -304,7 +366,7 @@ describe('job runner integration', { skip: databaseUrl ? false : 'DATABASE_URL i
       docId: 'fake-doc',
       docUrl: null,
       text: TEXT,
-      speed: 4,
+      targetDurationMs: 0,
       humanness: 1,
     });
 

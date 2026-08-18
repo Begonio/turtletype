@@ -18,7 +18,14 @@ interface JobStore {
 
   // -- composer --------------------------------------------------------
   text: string;
-  speed: number;
+  /** Requested wall-clock duration. null means "run at the natural minimum". */
+  durationMs: number | null;
+  /** Shortest believable duration for the current text, computed server-side. */
+  minDurationMs: number;
+  maxDurationMs: number;
+  /** Separate writing sessions the plan will produce, i.e. expected revisions. */
+  bursts: number;
+  estimating: boolean;
   humanness: number;
   docMode: DocMode;
   docUrlInput: string;
@@ -41,7 +48,8 @@ interface JobStore {
   loadUser: () => Promise<void>;
   signOut: () => Promise<void>;
   setText: (text: string) => void;
-  setSpeed: (speed: number) => void;
+  setDurationMs: (durationMs: number | null) => void;
+  refreshEstimate: () => void;
   setHumanness: (humanness: number) => void;
   setDocMode: (mode: DocMode) => void;
   setDocUrlInput: (value: string) => void;
@@ -61,6 +69,12 @@ interface JobStore {
 let source: EventSource | null = null;
 let attachedJobId: string | null = null;
 
+/** Estimate request bookkeeping — connection state, not app state. */
+let estimateTimer: ReturnType<typeof setTimeout> | null = null;
+let estimateController: AbortController | null = null;
+let estimateRequestId = 0;
+const ESTIMATE_DEBOUNCE_MS = 500;
+
 const TERMINAL: Phase[] = ['done', 'failed', 'cancelled'];
 
 function applyOps(preview: string, ops: WireOp[]): string {
@@ -79,7 +93,11 @@ export const useJobStore = create<JobStore>()(
       authChecked: false,
 
       text: '',
-      speed: 1,
+      durationMs: null,
+      minDurationMs: 0,
+      maxDurationMs: 24 * 60 * 60 * 1_000,
+      bursts: 0,
+      estimating: false,
       humanness: 0.5,
       docMode: 'new',
       docUrlInput: '',
@@ -115,14 +133,64 @@ export const useJobStore = create<JobStore>()(
         }
       },
 
-      setText: (text) => set({ text }),
-      setSpeed: (speed) => set({ speed }),
-      setHumanness: (humanness) => set({ humanness }),
+      setText: (text) => {
+        set({ text });
+        get().refreshEstimate();
+      },
+      setDurationMs: (durationMs) => set({ durationMs }),
+      setHumanness: (humanness) => {
+        set({ humanness });
+        // Typos add keystrokes, so the floor moves with this too.
+        get().refreshEstimate();
+      },
+
+      /**
+       * Asks the server what the shortest believable duration for this text is.
+       * Debounced, and older replies are discarded, so typing quickly cannot
+       * leave a stale floor on the slider.
+       */
+      refreshEstimate() {
+        const { text } = get();
+
+        if (estimateTimer !== null) clearTimeout(estimateTimer);
+        estimateController?.abort();
+
+        if (!text.trim()) {
+          set({ minDurationMs: 0, bursts: 0, estimating: false });
+          return;
+        }
+
+        set({ estimating: true });
+        estimateTimer = setTimeout(() => {
+          const controller = new AbortController();
+          estimateController = controller;
+          const requestId = ++estimateRequestId;
+
+          void api
+            .estimate({ text: get().text, humanness: get().humanness }, controller.signal)
+            .then((estimate) => {
+              if (requestId !== estimateRequestId) return;
+              set((state) => ({
+                minDurationMs: estimate.minDurationMs,
+                maxDurationMs: estimate.maxDurationMs,
+                bursts: estimate.bursts,
+                estimating: false,
+                // Keep an explicit choice, but never below the new floor.
+                durationMs:
+                  state.durationMs === null ? null : Math.max(state.durationMs, estimate.minDurationMs),
+              }));
+            })
+            .catch(() => {
+              if (requestId === estimateRequestId) set({ estimating: false });
+            });
+        }, ESTIMATE_DEBOUNCE_MS);
+      },
+
       setDocMode: (docMode) => set({ docMode }),
       setDocUrlInput: (docUrlInput) => set({ docUrlInput }),
 
       async startJob() {
-        const { text, speed, humanness, docMode, docUrlInput } = get();
+        const { text, durationMs, humanness, docMode, docUrlInput } = get();
         if (!text.trim() || get().phase === 'starting') return;
 
         get().detachStream();
@@ -142,8 +210,9 @@ export const useJobStore = create<JobStore>()(
         try {
           const response = await api.createJob({
             text,
-            speed,
             humanness,
+            // Omitted means "run at the natural minimum", which the server computes.
+            ...(durationMs ? { durationMs } : {}),
             ...(docMode === 'existing' && docUrlInput.trim() ? { docId: docUrlInput.trim() } : {}),
           });
 
@@ -152,6 +221,8 @@ export const useJobStore = create<JobStore>()(
             docUrl: response.docUrl,
             totalChars: response.totalChars,
             estimatedMs: response.estimatedMs,
+            minDurationMs: response.minDurationMs,
+            bursts: response.bursts,
             phase: response.started ? 'running' : 'pending',
             notice: response.started
               ? null
@@ -345,7 +416,7 @@ export const useJobStore = create<JobStore>()(
       // running job should be re-attachable. Nothing else is worth keeping.
       partialize: (state) => ({
         text: state.text,
-        speed: state.speed,
+        durationMs: state.durationMs,
         humanness: state.humanness,
         docMode: state.docMode,
         docUrlInput: state.docUrlInput,

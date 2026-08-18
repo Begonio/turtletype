@@ -23,8 +23,11 @@ export interface JobSpec {
   docId: string;
   docUrl: string | null;
   text: string;
-  speed: number;
+  /** Wall-clock time the job should take. Extra time becomes rest between bursts. */
+  targetDurationMs: number;
   humanness: number;
+  /** Fixes the plan's randomness. Used by tests; unset in production. */
+  seed?: number;
 }
 
 /** How often job progress is written back to Postgres (flushes are far more frequent). */
@@ -40,8 +43,8 @@ const DB_PROGRESS_INTERVAL_MS = 2_000;
  *     batchUpdate.
  *
  * Keeping them separate is what makes the rate limit survivable: typing speed
- * is decoupled from request rate entirely, so a 4x turbo job and a 0.25x job
- * issue the same ~1 request per window.
+ * is decoupled from request rate entirely, so a job stretched over an hour and
+ * one running at its minimum issue requests at the same bounded cadence.
  */
 export class JobRunner {
   private readonly controller = new AbortController();
@@ -102,7 +105,7 @@ export class JobRunner {
   }
 
   async run(): Promise<void> {
-    const { jobId, userId, docId, docUrl, text, speed, humanness } = this.spec;
+    const { jobId, userId, docId, docUrl, text, targetDurationMs, humanness, seed } = this.spec;
     this.startedAt = Date.now();
 
     try {
@@ -114,7 +117,12 @@ export class JobRunner {
       this.writer = new DocWriter(auth, docId, this.startIndex);
 
       // The whole document is planned up front: pure, in-memory, no I/O.
-      const events = humanize(text, { speed, humanness });
+      const events = humanize(text, {
+        targetDurationMs,
+        humanness,
+        minChunkRestMs: config.jobs.minChunkRestMs,
+        ...(seed === undefined ? {} : { seed }),
+      });
 
       const flushTask = this.flushLoop().catch((error) => {
         this.recordFailure(error);
@@ -193,8 +201,22 @@ export class JobRunner {
       if (this.controller.signal.aborted) throw this.controller.signal.reason;
 
       if (event.type === 'pause') {
+        // Land the burst before a long rest, so the document holds a complete
+        // thought for the whole gap. This is what gives version history a
+        // separate, human-looking revision per burst instead of one blob.
+        if (event.rest) await this.flushOnce();
         await sleep(event.duration, this.controller.signal);
         continue;
+      }
+
+      if (event.type === 'backspace') {
+        // Commit the mistake to the document *before* deleting it. Within a
+        // single flush window the planner would otherwise trim the typo out of
+        // the pending insert, and the reader would never see it happen — no
+        // typo in the doc, no correction in the history. Flushing here forces
+        // the deletion to become a real deleteContentRange against text Google
+        // has already stored.
+        await this.flushOnce();
       }
 
       await sleep(event.delay, this.controller.signal);

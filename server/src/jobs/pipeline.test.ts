@@ -48,6 +48,7 @@ interface RunResult {
   finalText: string;
   batchUpdates: number;
   requests: number;
+  deleteRequests: number;
 }
 
 /**
@@ -56,7 +57,7 @@ interface RunResult {
  */
 function runPipeline(
   events: HumanEvent[],
-  options: { windowMs: number; existingBody?: string },
+  options: { windowMs: number; existingBody?: string; flushBeforeBackspace?: boolean },
 ): RunResult {
   const existing = options.existingBody ?? '';
   const doc = new FakeDocument(existing);
@@ -68,6 +69,7 @@ function runPipeline(
 
   let batchUpdates = 0;
   let requests = 0;
+  let deleteRequests = 0;
   let elapsed = 0;
   let windowStart = 0;
 
@@ -83,11 +85,21 @@ function runPipeline(
     cursor = planned.endCursor;
     batchUpdates += 1;
     requests += planned.requests.length;
+    deleteRequests += planned.requests.filter((request) => request.deleteContentRange).length;
   };
 
   for (const event of events) {
+    // Mirrors JobRunner: the buffer is flushed before a backspace so the typo
+    // is already in the document when the deletion is issued, and before a
+    // rest so each burst lands as its own write.
+    if (options.flushBeforeBackspace && (event.type === 'backspace' || (event.type === 'pause' && event.rest))) {
+      flush();
+      windowStart = elapsed;
+    }
+
     elapsed += event.type === 'pause' ? event.duration : event.delay;
     buffer.push(event);
+
     if (elapsed - windowStart >= options.windowMs) {
       flush();
       windowStart = elapsed;
@@ -95,7 +107,7 @@ function runPipeline(
   }
   flush();
 
-  return { finalText: doc.text, batchUpdates, requests };
+  return { finalText: doc.text, batchUpdates, requests, deleteRequests };
 }
 
 const TEXT = [
@@ -109,7 +121,7 @@ describe('write pipeline', () => {
   it('lands the exact text in an empty document, whatever the flush cadence', () => {
     for (const windowMs of [50, 200, 800, 2_000, 10_000]) {
       for (let seed = 0; seed < 25; seed++) {
-        const events = humanize(TEXT, { speed: 1, humanness: 1, seed });
+        const events = humanize(TEXT, { humanness: 1, minChunkRestMs: 1_000, seed });
         const { finalText } = runPipeline(events, { windowMs });
         assert.equal(finalText, TEXT, `window ${windowMs}ms, seed ${seed}`);
       }
@@ -119,14 +131,14 @@ describe('write pipeline', () => {
   it('appends to an existing document without touching what was already there', () => {
     const existing = 'Existing content that must survive.\n';
     for (let seed = 0; seed < 25; seed++) {
-      const events = humanize(TEXT, { speed: 1, humanness: 1, seed });
+      const events = humanize(TEXT, { humanness: 1, minChunkRestMs: 1_000, seed });
       const { finalText } = runPipeline(events, { windowMs: 800, existingBody: existing });
       assert.equal(finalText, existing + TEXT, `seed ${seed}`);
     }
   });
 
   it('holds to roughly one batchUpdate per flush window', () => {
-    const events = humanize(TEXT, { speed: 1, humanness: 1, seed: 4 });
+    const events = humanize(TEXT, { humanness: 1, minChunkRestMs: 1_000, seed: 4 });
     const totalMs = events.reduce(
       (sum, event) => sum + (event.type === 'pause' ? event.duration : event.delay),
       0,
@@ -139,10 +151,10 @@ describe('write pipeline', () => {
     assert.ok(requests / batchUpdates < 3, `${requests / batchUpdates} requests per batch`);
   });
 
-  it('stays correct at turbo speed, where a window holds far more keystrokes', () => {
+  it('stays correct when a window holds far more keystrokes than usual', () => {
     for (let seed = 0; seed < 25; seed++) {
-      const events = humanize(TEXT, { speed: 4, humanness: 1, seed });
-      const { finalText } = runPipeline(events, { windowMs: 800 });
+      const events = humanize(TEXT, { humanness: 1, minChunkRestMs: 1_000, seed });
+      const { finalText } = runPipeline(events, { windowMs: 10_000 });
       assert.equal(finalText, TEXT, `seed ${seed}`);
     }
   });
@@ -150,7 +162,7 @@ describe('write pipeline', () => {
   it('leaves a partial but valid prefix when a job is stopped early', () => {
     // Cancelling mid-word must not corrupt the document: what is there should
     // be a prefix of the input, not a mangled fragment.
-    const events = humanize(TEXT, { speed: 1, humanness: 1, seed: 8 });
+    const events = humanize(TEXT, { humanness: 1, minChunkRestMs: 1_000, seed: 8 });
     const truncated = events.slice(0, Math.floor(events.length / 2));
     const { finalText } = runPipeline(truncated, { windowMs: 800 });
 
@@ -159,6 +171,66 @@ describe('write pipeline', () => {
       TEXT.startsWith(finalText),
       `partial output is not a prefix of the input:\n${JSON.stringify(finalText.slice(-40))}`,
     );
+  });
+});
+
+/**
+ * The behaviour the whole feature rests on: a typo has to actually reach the
+ * document before it is corrected. If the mistake and its correction land in
+ * the same flush window, the planner folds them together and Google never sees
+ * either one — the document gets clean text and the version history shows no
+ * sign of a person writing it.
+ */
+describe('typo visibility in the document', () => {
+  const countBackspaces = (events: HumanEvent[]): number =>
+    events.filter((event) => event.type === 'backspace').length;
+
+  it('turns every correction into a real deletion against stored text', () => {
+    for (let seed = 0; seed < 20; seed++) {
+      const events = humanize(TEXT, { humanness: 1, minChunkRestMs: 1_000, seed });
+      const backspaces = countBackspaces(events);
+      if (backspaces === 0) continue;
+
+      const result = runPipeline(events, { windowMs: 60_000, flushBeforeBackspace: true });
+
+      assert.equal(
+        result.deleteRequests,
+        backspaces,
+        `seed ${seed}: ${backspaces} corrections produced ${result.deleteRequests} deletions`,
+      );
+      assert.equal(result.finalText, TEXT, `seed ${seed} still has to end up correct`);
+    }
+  });
+
+  it('would swallow every correction without the pre-backspace flush', () => {
+    // Documents why the runner flushes before a backspace at all: with a wide
+    // window and no forced flush, corrections vanish into the buffer.
+    let checked = 0;
+    for (let seed = 0; seed < 20; seed++) {
+      const events = humanize(TEXT, { humanness: 1, minChunkRestMs: 1_000, seed });
+      if (countBackspaces(events) === 0) continue;
+      checked += 1;
+
+      const result = runPipeline(events, { windowMs: 60_000, flushBeforeBackspace: false });
+      assert.equal(result.deleteRequests, 0, `seed ${seed} unexpectedly emitted a deletion`);
+      assert.equal(result.finalText, TEXT);
+    }
+    assert.ok(checked > 0, 'expected at least one seed with a correction');
+  });
+
+  it('writes each burst separately so revisions do not merge', () => {
+    const events = humanize(TEXT, { humanness: 0, minChunkRestMs: 60_000, seed: 3 });
+    const rests = events.filter((event) => event.type === 'pause' && event.rest).length;
+    assert.ok(rests > 0, 'sample text should contain at least one burst seam');
+
+    // A very wide window: without the forced flush at each rest, the whole
+    // document would arrive as a single write.
+    const result = runPipeline(events, { windowMs: 3_600_000, flushBeforeBackspace: true });
+    assert.ok(
+      result.batchUpdates >= rests + 1,
+      `${rests} rests should produce at least ${rests + 1} writes, got ${result.batchUpdates}`,
+    );
+    assert.equal(result.finalText, TEXT);
   });
 });
 

@@ -1,30 +1,23 @@
+import { useEffect } from 'react';
 import { useJobStore, isActive } from '../store/useJobStore';
+import { formatDuration } from '../lib/format';
 
 /** Above this, a job runs long enough that the user deserves a heads-up. */
 const LONG_TEXT_THRESHOLD = 50_000;
 
-function formatDuration(ms: number): string {
-  const totalMinutes = Math.round(ms / 60_000);
-  if (totalMinutes < 1) return 'under a minute';
-  if (totalMinutes < 60) return `about ${totalMinutes} min`;
-  const hours = Math.floor(totalMinutes / 60);
-  const minutes = totalMinutes % 60;
-  return minutes === 0 ? `about ${hours}h` : `about ${hours}h ${minutes}m`;
-}
-
-/**
- * Rough client-side estimate for the warning banner: ~100ms per character at
- * 1x, before pauses. The server returns an exact figure once the job starts.
- */
-function roughEstimateMs(chars: number, speed: number): number {
-  return (chars * 118) / speed;
-}
-
 export default function Composer() {
   const text = useJobStore((state) => state.text);
-  const speed = useJobStore((state) => state.speed);
   const phase = useJobStore((state) => state.phase);
+  const minDurationMs = useJobStore((state) => state.minDurationMs);
   const setText = useJobStore((state) => state.setText);
+  const refreshEstimate = useJobStore((state) => state.refreshEstimate);
+
+  // Text restored from a previous session needs an estimate too.
+  useEffect(() => {
+    if (text.trim() && minDurationMs === 0) refreshEstimate();
+    // Only on mount: subsequent edits refresh through setText.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const locked = isActive(phase);
   const chars = text.length;
@@ -51,9 +44,9 @@ export default function Composer() {
 
       {chars > LONG_TEXT_THRESHOLD ? (
         <div className="border-t border-amber-500/20 bg-amber-500/5 px-4 py-3 text-xs leading-relaxed text-amber-200/90">
-          That is {chars.toLocaleString()} characters — at this speed it will take{' '}
-          {formatDuration(roughEstimateMs(chars, speed))} to type. You can close this tab; the job
-          keeps running on the server, and reopening the app reconnects you to it.
+          That is {chars.toLocaleString()} characters — writing it at a believable pace takes at least{' '}
+          {minDurationMs > 0 ? formatDuration(minDurationMs) : 'a long while'}. You can close this tab;
+          the job keeps running on the server, and reopening the app reconnects you to it.
         </div>
       ) : null}
     </section>

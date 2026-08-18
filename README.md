@@ -28,8 +28,8 @@ HumanType never does that:
    buffer.
 3. **A separate flush loop drains the buffer every 800ms** as a single `batchUpdate` containing
    everything that happened in that window: merged inserts, and `deleteContentRange` operations for
-   backspaces. Typing speed and request rate are completely decoupled, so a 4× Turbo job issues
-   exactly as many requests as a 0.25× Slow job.
+   backspaces. Typing speed and request rate are completely decoupled, so a job stretched over an
+   afternoon issues requests at the same bounded cadence as one running at its minimum.
 4. **Every flush passes through a per-job token bucket** capped at `DOCS_WRITES_PER_MINUTE`
    (default 55). Each job constructs its own `RateLimiter`; state is never shared between jobs or
    users, so one heavy user can never eat another's quota.
@@ -63,9 +63,10 @@ a local cursor the same way Google will. Two reductions happen there:
   emitting a delete — no observer can see an intermediate state inside a single batch, so the
   visible result is identical and it costs one request fewer.
 
-A backspace that crosses a flush boundary — the common case for a typo caught a beat later —
-becomes a real `deleteContentRange` against text Google already has. That is the typo-then-
-correction the reader actually sees appear and get fixed.
+A backspace that crosses a flush boundary becomes a real `deleteContentRange` against text Google
+already has. The runner forces that boundary before every correction (see *Making typos visible*
+below), so the mistake genuinely lands in the document and is then removed — which is what shows up
+in version history.
 
 Deletes are floored at the index the job started from, so a job appending to an existing document
 can never chew into content that was already there.
@@ -77,21 +78,56 @@ can never chew into content that was already there.
 `server/src/jobs/humanize.ts` — pure, seedable, no I/O.
 
 ```ts
-humanize(text, { speed: 1, humanness: 0.5 }) // => HumanEvent[]
+humanize(text, { humanness: 0.5, targetDurationMs: 3_600_000 }) // => HumanEvent[]
 
 type HumanEvent =
   | { type: 'type';      char: string;  delay: number }
   | { type: 'backspace'; count: number; delay: number }
-  | { type: 'pause';     duration: number }
+  | { type: 'pause';     duration: number; rest?: true }
 ```
 
-| Input       | Range      | Effect                                            |
-| ----------- | ---------- | ------------------------------------------------- |
-| `speed`     | 0.25 – 4   | Divides every delay and pause. Slow → Turbo.      |
-| `humanness` | 0 – 1      | 0 = no mistakes ever; 1 ≈ 8% of words get a typo. |
+| Input              | Effect                                                              |
+| ------------------ | ------------------------------------------------------------------- |
+| `humanness`        | 0 = no mistakes ever; 1 ≈ 8% of words get a typo.                   |
+| `targetDurationMs` | Wall-clock time for the whole job. Below the natural minimum it is ignored. |
+| `minChunkRestMs`   | Shortest gap between writing bursts. 60s in production.             |
+
+### Why it writes in bursts
+
+**Google Docs groups edits into revisions by how close together in time they
+happen, not by how many API calls arrive.** A document typed start to finish
+inside a minute collapses into a single revision that reads exactly like a
+paste — which is what an early version of this app produced, despite issuing
+dozens of `batchUpdate` calls.
+
+So the engine writes the way people do: a burst of a sentence or two, then a
+rest of at least a minute. Each burst becomes its own revision in version
+history, and the trail looks like someone working through a document.
+
+There is no speed multiplier. `targetDurationMs` sets how long the job should
+take, and **all** the extra time goes into the rests — keystrokes stay at
+60–140ms no matter what. A person writing an essay over an afternoon still
+types at ordinary speed; they just stop and think a lot. Slowing the keys
+themselves to fill three hours would read as obviously synthetic.
+
+`minimumDurationMs(text)` gives the floor for a piece of text — natural typing
+plus one minimum rest per seam — and a job can never be scheduled faster. A
+~1,150 character essay works out to about 14 minutes across 10 bursts.
+
+### Making typos visible
+
+A typo is only convincing if the document actually held the mistake for a
+while. Since the planner merges an insert and a delete that land in the same
+flush window, a correction typed 400ms after the mistake would vanish before
+Google ever saw it.
+
+The runner therefore forces a flush *before* every backspace, so the misspelling
+is committed to the document first and the correction arrives as a genuine
+`deleteContentRange` against stored text. It also flushes before each rest, so
+a burst lands as one complete write rather than being split across the gap.
 
 - **Base rhythm:** 60–140ms per character, gaussian-distributed (Box–Muller, clamped).
-- **Pauses (before speed scaling):** comma/semicolon/colon 150–400ms; `.` `!` `?` 400ms–1.2s;
+- **Pauses:** comma/semicolon/colon 150–400ms; `.` `!` `?` 400ms–1.2s;
   paragraph break 1.5–5s; single line break 400–900ms; 5% chance of a 300–800ms mid-word
   hesitation.
 - **Common words** (`the and is to a of in`) come out 30% faster, as a single burst.
@@ -101,7 +137,7 @@ type HumanEvent =
   typed since the mistake, then retypes it slightly more deliberately.
 
 The engine guarantees the replayed event stream reproduces the input **exactly**. This is
-property-tested over hundreds of seeds and the full speed/humanness range.
+property-tested over hundreds of seeds and the full humanness and duration range.
 
 ---
 
@@ -203,7 +239,8 @@ Without `DATABASE_URL` those tests skip automatically.
 | `GET`    | `/auth/google/callback`  | Upserts the user, sets the session, redirects to `/app`.   |
 | `GET`    | `/auth/logout`           | Destroys the session and redirects. `POST` returns JSON.   |
 | `GET`    | `/api/me`                | Current user, or `401`.                                    |
-| `POST`   | `/api/jobs`              | `{ text, speed, humanness, docId? }` → `{ jobId, docUrl }`.|
+| `POST`   | `/api/estimate`          | `{ text, humanness }` → minimum duration + burst count.     |
+| `POST`   | `/api/jobs`              | `{ text, humanness, durationMs?, docId? }` → `{ jobId, docUrl }`. |
 | `GET`    | `/api/jobs`              | Recent jobs for the signed-in user.                        |
 | `GET`    | `/api/jobs/:id`          | Poll job status.                                           |
 | `GET`    | `/api/jobs/:id/stream`   | SSE: `snapshot`, `progress`, `status`, `retry`, `done`, `error`. |

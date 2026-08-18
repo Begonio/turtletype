@@ -13,7 +13,7 @@ import {
 } from '../docs/documents.js';
 import { getChannel, peekChannel } from '../jobs/events.js';
 import { jobQueue } from '../jobs/queue.js';
-import { estimateDurationMs, humanize, SPEED_MAX, SPEED_MIN } from '../jobs/humanize.js';
+import { countBursts, estimateDurationMs, humanize, minimumDurationMs } from '../jobs/humanize.js';
 import { hasActiveSubscription, isAuthenticated } from '../middleware/isAuthenticated.js';
 import { HttpError } from '../middleware/errorHandler.js';
 
@@ -23,11 +23,26 @@ jobsRouter.use(isAuthenticated);
 
 const createJobSchema = z.object({
   text: z.string().min(1, 'Text is required'),
-  speed: z.coerce.number().min(SPEED_MIN).max(SPEED_MAX).default(1),
+  /**
+   * How long the job should take, in milliseconds. Omit it and the job runs at
+   * its natural minimum. Anything below the minimum is raised to it — typing
+   * faster than a person is what made documents look pasted.
+   */
+  durationMs: z.coerce.number().positive().max(config.jobs.maxJobDurationMs).optional(),
   humanness: z.coerce.number().min(0).max(1).default(0.5),
   // Accepts a full Google Docs URL or a bare document ID.
   docId: z.string().trim().min(1).optional(),
 });
+
+const estimateSchema = z.object({
+  text: z.string().min(1, 'Text is required'),
+  humanness: z.coerce.number().min(0).max(1).default(0.5),
+});
+
+/** Planning options shared by the estimate endpoint and job creation. */
+function planOptions(humanness: number) {
+  return { humanness, minChunkRestMs: config.jobs.minChunkRestMs };
+}
 
 /** Async handler wrapper so rejections reach the error middleware. */
 function wrap(handler: (req: Request, res: Response, next: NextFunction) => Promise<void>) {
@@ -43,6 +58,32 @@ function documentTitle(text: string): string {
   }
   return firstLine.length > 60 ? `${firstLine.slice(0, 57)}…` : firstLine;
 }
+
+/**
+ * What a job would look like without starting one: the shortest believable
+ * duration for this text, and how many separate writing bursts that implies.
+ * The composer calls this as you type so the duration control can offer a
+ * floor that reflects the actual text rather than a guess.
+ */
+jobsRouter.post(
+  '/estimate',
+  wrap(async (req, res) => {
+    const body = estimateSchema.parse(req.body);
+    const text = sanitizeText(body.text);
+    if (!text.trim()) {
+      res.json({ minDurationMs: 0, bursts: 0, totalChars: 0 });
+      return;
+    }
+
+    const plan = humanize(text, planOptions(body.humanness));
+    res.json({
+      minDurationMs: estimateDurationMs(plan),
+      bursts: countBursts(plan),
+      totalChars: text.length,
+      maxDurationMs: config.jobs.maxJobDurationMs,
+    });
+  }),
+);
 
 jobsRouter.post(
   '/jobs',
@@ -91,21 +132,24 @@ jobsRouter.post(
       totalChars: text.length,
     });
 
+    // A job can never run faster than the natural minimum: that floor is the
+    // whole reason the finished document reads as written rather than pasted.
+    const minDurationMs = minimumDurationMs(text, planOptions(body.humanness));
+    const targetDurationMs = Math.max(minDurationMs, body.durationMs ?? 0);
+
     const { started, queuePosition } = jobQueue.enqueue({
       jobId: job.id,
       userId: user.id,
       docId,
       docUrl,
       text,
-      speed: body.speed,
+      targetDurationMs,
       humanness: body.humanness,
     });
 
-    // Cheap enough to plan twice, and it lets the UI show an honest ETA
-    // before a single character is written.
-    const estimatedMs = estimateDurationMs(
-      humanize(text, { speed: body.speed, humanness: body.humanness }),
-    );
+    // Cheap enough to plan twice, and it lets the UI show an honest ETA and
+    // burst count before a single character is written.
+    const plan = humanize(text, { ...planOptions(body.humanness), targetDurationMs });
 
     res.status(201).json({
       jobId: job.id,
@@ -114,7 +158,9 @@ jobsRouter.post(
       totalChars: text.length,
       started,
       queuePosition,
-      estimatedMs,
+      estimatedMs: estimateDurationMs(plan),
+      minDurationMs,
+      bursts: countBursts(plan),
     });
   }),
 );

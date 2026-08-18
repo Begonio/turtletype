@@ -15,12 +15,12 @@ const STEPS = [
     body: 'Anything from a paragraph to a dissertation. Nothing is stored beyond the job record.',
   },
   {
-    title: 'Pick a pace',
-    body: 'Slow to Turbo, robot to very human. Humanness controls typos, hesitation, and rhythm.',
+    title: 'Pick a schedule',
+    body: 'It works out the shortest believable time for your text. Stretch it over an afternoon if you like.',
   },
   {
-    title: 'Watch it type',
-    body: 'It writes into your Google Doc in real time — pauses at commas, fumbles a word, fixes it.',
+    title: 'Close the tab',
+    body: 'It writes in sittings with real gaps between them, so the doc\'s version history reads as written, not pasted.',
   },
 ];
 

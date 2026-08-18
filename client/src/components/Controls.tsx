@@ -1,11 +1,5 @@
 import { isActive, useJobStore } from '../store/useJobStore';
-
-const SPEED_STEPS = [
-  { label: 'Slow', value: 0.25 },
-  { label: 'Normal', value: 1 },
-  { label: 'Fast', value: 2 },
-  { label: 'Turbo', value: 4 },
-] as const;
+import { durationToSlider, formatDuration, formatFinishTime, sliderToDuration } from '../lib/format';
 
 const HUMANNESS_LABELS = [
   { upTo: 0.05, label: 'Robot' },
@@ -20,7 +14,11 @@ function humannessLabel(value: number): string {
 }
 
 export default function Controls() {
-  const speed = useJobStore((state) => state.speed);
+  const durationMs = useJobStore((state) => state.durationMs);
+  const minDurationMs = useJobStore((state) => state.minDurationMs);
+  const maxDurationMs = useJobStore((state) => state.maxDurationMs);
+  const bursts = useJobStore((state) => state.bursts);
+  const estimating = useJobStore((state) => state.estimating);
   const humanness = useJobStore((state) => state.humanness);
   const docMode = useJobStore((state) => state.docMode);
   const docUrlInput = useJobStore((state) => state.docUrlInput);
@@ -28,47 +26,77 @@ export default function Controls() {
   const phase = useJobStore((state) => state.phase);
   const error = useJobStore((state) => state.error);
 
-  const setSpeed = useJobStore((state) => state.setSpeed);
+  const setDurationMs = useJobStore((state) => state.setDurationMs);
   const setHumanness = useJobStore((state) => state.setHumanness);
   const setDocMode = useJobStore((state) => state.setDocMode);
   const setDocUrlInput = useJobStore((state) => state.setDocUrlInput);
   const startJob = useJobStore((state) => state.startJob);
 
   const locked = isActive(phase);
-  const speedIndex = Math.max(
-    0,
-    SPEED_STEPS.findIndex((step) => step.value === speed),
-  );
   const missingDoc = docMode === 'existing' && !docUrlInput.trim();
-  const canStart = !locked && text.trim().length > 0 && !missingDoc;
+  const hasEstimate = minDurationMs > 0;
+  const canStart = !locked && text.trim().length > 0 && !missingDoc && hasEstimate;
+
+  // No explicit choice means "as fast as is still believable".
+  const effectiveMs = Math.max(minDurationMs, durationMs ?? 0);
+  const sliderMax = Math.max(minDurationMs * 2, maxDurationMs);
+  const sliderPosition = durationToSlider(effectiveMs, minDurationMs, sliderMax);
 
   return (
     <aside className="flex w-full flex-col gap-6 rounded-xl border border-ink-800 bg-ink-900 p-5 lg:w-80">
       <div>
         <div className="flex items-baseline justify-between">
-          <label htmlFor="speed" className="font-mono text-xs uppercase tracking-[0.18em] text-ink-400">
-            Speed
+          <label htmlFor="duration" className="font-mono text-xs uppercase tracking-[0.18em] text-ink-400">
+            Time to write
           </label>
           <span className="font-mono text-xs text-accent-400">
-            {SPEED_STEPS[speedIndex]?.label} · {speed}×
+            {estimating ? 'measuring…' : hasEstimate ? formatDuration(effectiveMs) : '—'}
           </span>
         </div>
+
         <input
-          id="speed"
+          id="duration"
           type="range"
           min={0}
-          max={SPEED_STEPS.length - 1}
-          step={1}
-          value={speedIndex}
-          disabled={locked}
-          onChange={(event) => setSpeed(SPEED_STEPS[Number(event.target.value)]?.value ?? 1)}
+          max={1}
+          step={0.001}
+          value={sliderPosition}
+          disabled={locked || !hasEstimate}
+          onChange={(event) =>
+            setDurationMs(sliderToDuration(Number(event.target.value), minDurationMs, sliderMax))
+          }
           className="mt-3 w-full disabled:opacity-50"
         />
+
         <div className="mt-2 flex justify-between font-mono text-[10px] text-ink-400">
-          {SPEED_STEPS.map((step) => (
-            <span key={step.label}>{step.label}</span>
-          ))}
+          <span>{hasEstimate ? `min ${formatDuration(minDurationMs)}` : 'min —'}</span>
+          <span>{formatDuration(sliderMax)}</span>
         </div>
+
+        {hasEstimate ? (
+          <p className="mt-3 text-xs leading-relaxed text-ink-400">
+            Written in <span className="text-ink-300">{bursts}</span>{' '}
+            {bursts === 1 ? 'sitting' : 'sittings'} with real gaps between them, finishing around{' '}
+            <span className="text-ink-300">{formatFinishTime(effectiveMs)}</span>. Those gaps are what
+            make the doc's version history look written rather than pasted — it can't go faster than
+            the minimum.
+          </p>
+        ) : (
+          <p className="mt-3 text-xs leading-relaxed text-ink-400">
+            Paste some text and HumanType works out the shortest believable schedule for it.
+          </p>
+        )}
+
+        {durationMs !== null && durationMs > minDurationMs ? (
+          <button
+            type="button"
+            onClick={() => setDurationMs(null)}
+            disabled={locked}
+            className="mt-2 font-mono text-[10px] text-ink-400 underline underline-offset-2 transition hover:text-ink-200"
+          >
+            reset to minimum
+          </button>
+        ) : null}
       </div>
 
       <div>
