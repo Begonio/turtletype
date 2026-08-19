@@ -50,7 +50,12 @@ const estimateSchema = z.object({
 
 /** Planning options shared by the estimate endpoint and job creation. */
 function planOptions(humanness: number) {
-  return { humanness, minChunkRestMs: config.jobs.minChunkRestMs };
+  return {
+    humanness,
+    minChunkRestMs: config.jobs.minChunkRestMs,
+    minChunkChars: config.jobs.minChunkChars,
+    maxChunkChars: config.jobs.maxChunkChars,
+  };
 }
 
 /** Async handler wrapper so rejections reach the error middleware. */

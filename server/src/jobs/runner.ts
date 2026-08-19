@@ -80,6 +80,10 @@ export class JobRunner {
   private resting = false;
   private lastEmitAt = 0;
 
+  /** The plan and how far through it we are, for cancel-time cleanup. */
+  private plan: HumanEvent[] = [];
+  private planIndex = 0;
+
   constructor(readonly spec: JobSpec) {}
 
   get signal(): AbortSignal {
@@ -170,6 +174,8 @@ export class JobRunner {
         targetDurationMs,
         humanness,
         minChunkRestMs: config.jobs.minChunkRestMs,
+        minChunkChars: config.jobs.minChunkChars,
+        maxChunkChars: config.jobs.maxChunkChars,
         ...(seed === undefined ? {} : { seed }),
       });
 
@@ -218,6 +224,9 @@ export class JobRunner {
       // Whatever was already "typed" belongs in the document — losing it
       // would leave a half-word the user never sees completed.
       await this.finalFlushBestEffort();
+      // Stopping early should not leave a typo behind that nobody is coming
+      // back to fix.
+      await this.repairOutstandingBestEffort();
       await this.persistProgress(true);
       await finishJob(jobId, 'cancelled');
       emitJobEvent(jobId, {
@@ -245,10 +254,15 @@ export class JobRunner {
    * the product.
    */
   private async replay(events: HumanEvent[]): Promise<void> {
+    // Kept so a cancellation can still clean up a mistake that has been left
+    // in the text but not yet corrected.
+    this.plan = events;
+    this.planIndex = 0;
     this.planTotalMs = estimateDurationMs(events);
     this.planElapsedMs = 0;
 
-    for (const event of events) {
+    for (const [index, event] of events.entries()) {
+      this.planIndex = index;
       await this.waitWhilePaused();
       if (this.controller.signal.aborted) throw this.controller.signal.reason;
 
@@ -350,6 +364,35 @@ export class JobRunner {
     this.charsWritten = Math.max(0, result.cursorIndex - this.startIndex);
     // The preview mirrors the document, so it needs the same targeted edit.
     await this.emitProgress([], { kind: 'repair', offset, remove, insert });
+  }
+
+  /**
+   * Applies a mistake's correction that the plan had not reached yet.
+   *
+   * Mistakes are deliberately left in the text until a later pass, so stopping
+   * a job mid-flight can strand one. At most one is ever outstanding, and it
+   * always refers to text already written, so the next repair still in the
+   * plan is exactly the one to apply.
+   */
+  private async repairOutstandingBestEffort(): Promise<void> {
+    if (!this.writer) return;
+
+    const pending = this.plan
+      .slice(this.planIndex)
+      .find((event): event is Extract<HumanEvent, { type: 'repair' }> => event.type === 'repair');
+
+    // A repair aimed past what was actually written belongs to text this job
+    // never got to, so there is nothing to clean up.
+    if (!pending || pending.offset + pending.remove > this.charsWritten) return;
+
+    try {
+      const result = await this.writer.repair(pending.offset, pending.remove, pending.insert, {
+        onRetry: () => {},
+      });
+      this.charsWritten = Math.max(0, result.cursorIndex - this.startIndex);
+    } catch (error) {
+      console.error(`[job ${this.spec.jobId}] could not tidy up a typo on cancel:`, error);
+    }
   }
 
   /** Best-effort drain used on cancellation, when the main signal is already aborted. */

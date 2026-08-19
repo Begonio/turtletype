@@ -91,7 +91,8 @@ type HumanEvent =
 | ------------------ | ------------------------------------------------------------------- |
 | `humanness`        | 0 = no mistakes ever; 1 ≈ 8% of words get a typo. Fixed at 0.85 in the app. |
 | `targetDurationMs` | Wall-clock time for the whole job. Below the natural minimum it is ignored. |
-| `minChunkRestMs`   | Shortest gap between writing bursts. 60s in production.             |
+| `minChunkRestMs`   | Shortest gap between writing bursts. 2.5 min in production.        |
+| `minChunkChars` / `maxChunkChars` | How much text one burst covers. Smaller = more revisions, longer runtime. |
 
 ### Why it writes in bursts
 
@@ -101,9 +102,25 @@ inside a minute collapses into a single revision that reads exactly like a
 paste — which is what an early version of this app produced, despite issuing
 dozens of `batchUpdate` calls.
 
-So the engine writes the way people do: a burst of a sentence or two, then a
-rest of at least a minute. Each burst becomes its own revision in version
-history, and the trail looks like someone working through a document.
+Docs snapshots a document roughly **every two minutes** while it is being
+edited. Anything faster than that interval is invisible, which is the whole
+problem: a burst and the rest after it land in the same bucket, and a mistake
+made and fixed inside one bucket is never recorded at all.
+
+So three things are sized against that two-minute clock:
+
+- **Rests between bursts** default to 2.5 minutes (`MIN_CHUNK_REST_MS`), so
+  every burst gets its own revision.
+- **A rest with a mistake waiting runs ~2x longer**, guaranteeing the wrong
+  text is on the page across a snapshot before the fix arrives. That is what
+  puts the typo *and* its correction in history as two versions.
+- **Thinking pauses inside a burst** (5-30s mid-sentence, more at clause and
+  sentence boundaries) stretch a burst across a minute or so instead of eight
+  seconds, so snapshots land mid-sentence — a revision ending mid-clause, which
+  no paste produces.
+
+Measured over 12 seeds on a 402-character sample: ~7.4 revisions across 19
+minutes, about 54 characters each, of which ~1.4 are pure corrections.
 
 There is no speed multiplier. `targetDurationMs` sets how long the job should
 take, and **all** the extra time goes into the rests — keystrokes stay at
@@ -111,9 +128,13 @@ take, and **all** the extra time goes into the rests — keystrokes stay at
 types at ordinary speed; they just stop and think a lot. Slowing the keys
 themselves to fill three hours would read as obviously synthetic.
 
-`minimumDurationMs(text)` gives the floor for a piece of text — natural typing
-plus one minimum rest per seam — and a job can never be scheduled faster. A
-~1,150 character essay works out to about 14 minutes across 10 bursts.
+`minimumDurationMs(text)` gives the floor for a piece of text — natural typing,
+thinking pauses, and one minimum rest per seam — and a job can never be
+scheduled faster. That floor is deliberately slow: roughly 8 minutes per 100
+characters, so a ~1,150 character essay takes about 90 minutes. Writing with
+real gaps is what Docs records as separate revisions; going faster is exactly
+what made it look pasted. Lower `MIN_CHUNK_REST_MS` or raise `BURST_MIN_CHARS`
+if you want it quicker at the cost of a coarser history.
 
 ### Making typos visible
 

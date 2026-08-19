@@ -194,15 +194,38 @@ describe('write pipeline', () => {
   it('leaves a partial but valid prefix when a job is stopped early', () => {
     // Cancelling mid-word must not corrupt the document: what is there should
     // be a prefix of the input, not a mangled fragment.
-    const events = humanize(TEXT, { humanness: 1, minChunkRestMs: 1_000, seed: 8 });
-    const truncated = events.slice(0, Math.floor(events.length / 2));
-    const { finalText } = runPipeline(truncated, { windowMs: 800 });
+    //
+    // Mistakes are left in the text until a later pass, so stopping early can
+    // strand one. JobRunner.repairOutstandingBestEffort applies that pending
+    // correction on cancel, which is mirrored here.
+    for (let seed = 0; seed < 12; seed++) {
+      const events = humanize(TEXT, { humanness: 1, minChunkRestMs: 1_000, seed });
+      const cut = Math.floor(events.length / 2);
+      const truncated = events.slice(0, cut);
 
-    assert.ok(finalText.length > 0, 'expected some text to have been written');
-    assert.ok(
-      TEXT.startsWith(finalText),
-      `partial output is not a prefix of the input:\n${JSON.stringify(finalText.slice(-40))}`,
-    );
+      const pending = events
+        .slice(cut)
+        .find((event): event is Extract<HumanEvent, { type: 'repair' }> => event.type === 'repair');
+
+      const written = truncated.reduce(
+        (count, event) =>
+          event.type === 'type'
+            ? count + 1
+            : event.type === 'repair'
+              ? count + event.insert.length - event.remove
+              : count,
+        0,
+      );
+      if (pending && pending.offset + pending.remove <= written) truncated.push(pending);
+
+      const { finalText } = runPipeline(truncated, { windowMs: 800 });
+
+      assert.ok(finalText.length > 0, `seed ${seed}: expected some text to have been written`);
+      assert.ok(
+        TEXT.startsWith(finalText),
+        `seed ${seed}: partial output is not a prefix:\n${JSON.stringify(finalText.slice(-40))}`,
+      );
+    }
   });
 });
 

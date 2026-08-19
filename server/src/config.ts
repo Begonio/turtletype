@@ -148,7 +148,14 @@ export const config = {
      * gaps shows up in version history as one entry — identical to a paste.
      * A minute is enough for Docs to record each burst separately.
      */
-    minChunkRestMs: num('MIN_CHUNK_REST_MS', 60_000),
+    minChunkRestMs: num('MIN_CHUNK_REST_MS', 150_000),
+    /**
+     * How much text lands in one burst. Roughly one version-history entry per
+     * burst, so smaller values give a more granular history at the cost of a
+     * longer minimum runtime.
+     */
+    minChunkChars: num('BURST_MIN_CHARS', 55),
+    maxChunkChars: num('BURST_MAX_CHARS', 150),
     /** Longest a single job may be stretched over. */
     maxJobDurationMs: num('MAX_JOB_DURATION_MS', 24 * 60 * 60 * 1_000),
   },

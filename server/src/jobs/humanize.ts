@@ -53,17 +53,33 @@ export interface HumanizeOptions {
    * faster than a person can.
    */
   targetDurationMs?: number;
-  /** Shortest gap between bursts. Lowered in tests; 60s in production. */
+  /** Shortest gap between bursts. Lowered in tests; 2.5 min in production. */
   minChunkRestMs?: number;
+  /** How much text one burst covers before the writer stops to think. */
+  minChunkChars?: number;
+  maxChunkChars?: number;
   /** Optional seed for deterministic output (tests). */
   seed?: number;
 }
 
 /**
- * Google Docs needs a gap of roughly this long before it treats what follows
- * as a separate revision rather than folding it into the previous one.
+ * Google Docs checkpoints a document into version history roughly every two
+ * minutes while it is being edited. Anything shorter than that interval is
+ * invisible: a burst and the rest after it land in the same bucket, and a
+ * mistake made and fixed inside one bucket is never recorded at all.
+ *
+ * So the floor sits comfortably above Docs' cadence rather than under it.
+ * Raise `MIN_CHUNK_REST_MS` further for an even more spread-out history.
  */
-export const DEFAULT_MIN_CHUNK_REST_MS = 60_000;
+export const DEFAULT_MIN_CHUNK_REST_MS = 150_000;
+
+/**
+ * A rest with an uncorrected mistake waiting runs longer still, to guarantee
+ * the wrong text is on the page across at least one checkpoint before the
+ * correction arrives. This is what puts the mistake *and* its fix in the
+ * history as two separate versions.
+ */
+const TYPO_REST_MULTIPLIER = { min: 1.8, max: 2.6 };
 
 /** Per-character delay, in milliseconds. Never scaled — humans type at human speed. */
 const CHAR_DELAY_MEAN = 100;
@@ -84,14 +100,47 @@ export const DEFAULT_HUMANNESS = 0.85;
 /** Chance of a mid-word "wait, what was I saying" hesitation. */
 const HESITATION_CHANCE = 0.05;
 
+/**
+ * Longer stop-and-think pauses *inside* a burst, at clause and sentence
+ * boundaries. These are not rests — no correction happens — but they stretch a
+ * burst across a minute or so instead of eight seconds.
+ *
+ * That matters for the same reason the rests do: Docs checkpoints on its own
+ * clock, so a burst delivered in one short blast is captured as a single lump
+ * of new text. Spread the same characters over a longer window and the
+ * snapshots land mid-sentence, which is what composing actually looks like.
+ */
+const SENTENCE_THINK_CHANCE = 0.7;
+const SENTENCE_THINK_MS = { min: 8_000, max: 35_000 };
+const CLAUSE_THINK_CHANCE = 0.3;
+const CLAUSE_THINK_MS = { min: 3_000, max: 14_000 };
+
+/**
+ * Working out the next phrase, mid-sentence.
+ *
+ * This is the one that gets sub-sentence granularity into version history. A
+ * 70-character sentence typed straight through takes seven seconds, so Docs
+ * only ever sees it complete. Stretch that sentence across a couple of minutes
+ * and the snapshot lands halfway through it — a revision ending mid-clause,
+ * which no paste ever produces.
+ */
+const WORD_THINK_CHANCE = 0.22;
+const WORD_THINK_MS = { min: 5_000, max: 30_000 };
+
 /** Words so ingrained they come out as a single burst. */
 const FAST_WORDS = new Set(['the', 'and', 'is', 'to', 'a', 'of', 'in']);
 const FAST_WORD_FACTOR = 0.7;
 
-/** A burst runs at least this many characters before the writer stops to think. */
-const MIN_CHUNK_CHARS = 90;
-/** ...and no more than this, even mid-sentence. */
-const MAX_CHUNK_CHARS = 260;
+/**
+ * A burst runs at least this many characters before the writer stops to think,
+ * and no more than the ceiling even mid-sentence.
+ *
+ * Small bursts are the lever on how many entries the version history ends up
+ * with: one revision per burst, roughly. Large ones make each revision arrive
+ * as a wall of text, which is what reads as a paste.
+ */
+const DEFAULT_MIN_CHUNK_CHARS = 55;
+const DEFAULT_MAX_CHUNK_CHARS = 150;
 
 /**
  * QWERTY physical neighbours. Used for wrong-key typos: a finger that lands
@@ -239,6 +288,17 @@ function adjacentKey(char: string, rng: Rng): string | null {
 export function humanize(text: string, options: HumanizeOptions = {}): HumanEvent[] {
   const humanness = clamp(options.humanness ?? DEFAULT_HUMANNESS, 0, 1);
   const minRest = Math.max(0, options.minChunkRestMs ?? DEFAULT_MIN_CHUNK_REST_MS);
+  /**
+   * Think pauses are sized relative to the rest interval, so lowering
+   * `minChunkRestMs` shrinks them too. Tests set a tiny rest and would
+   * otherwise still sleep through minutes of real "thinking".
+   */
+  const thinkScale = minRest / DEFAULT_MIN_CHUNK_REST_MS;
+  const think = (range: { min: number; max: number }): number =>
+    rng.range(range.min, range.max) * thinkScale;
+
+  const minChunkChars = Math.max(1, options.minChunkChars ?? DEFAULT_MIN_CHUNK_CHARS);
+  const maxChunkChars = Math.max(minChunkChars, options.maxChunkChars ?? DEFAULT_MAX_CHUNK_CHARS);
   const rng = new Rng(makeRandom(options.seed));
 
   const events: HumanEvent[] = [];
@@ -282,10 +342,18 @@ export function humanize(text: string, options: HumanizeOptions = {}): HumanEven
    */
   const emitRest = (): void => {
     if (charsThisChunk === 0 && !pendingTypo) return;
+
+    // A mistake left on the page needs to still be there when Docs takes its
+    // next snapshot, so walk away for noticeably longer before coming back to
+    // fix it. Otherwise the wrong text and the correction land in the same
+    // revision and neither is visible.
+    const spread = pendingTypo
+      ? rng.range(TYPO_REST_MULTIPLIER.min, TYPO_REST_MULTIPLIER.max)
+      : rng.range(1, 1.6);
+
     events.push({
       type: 'pause',
-      // A little spread so every gap is not identical.
-      duration: Math.round(minRest * rng.range(1, 1.6)),
+      duration: Math.round(minRest * spread),
       rest: true,
     });
     charsThisChunk = 0;
@@ -316,7 +384,7 @@ export function humanize(text: string, options: HumanizeOptions = {}): HumanEven
   for (const token of tokens) {
     if (token.isWord) {
       // A burst never runs past its ceiling; break at the word boundary.
-      if (charsThisChunk >= MAX_CHUNK_CHARS) emitRest();
+      if (charsThisChunk >= maxChunkChars) emitRest();
       typeWord(token.value);
     } else {
       typePunctuation(token.value);
@@ -342,6 +410,13 @@ export function humanize(text: string, options: HumanizeOptions = {}): HumanEven
 
   function typeWord(word: string): void {
     const fast = FAST_WORDS.has(word.toLowerCase());
+
+    // Stopping mid-sentence to work out the next phrase. Long enough that a
+    // Docs snapshot can land inside a sentence rather than only ever between
+    // finished ones.
+    if (charsThisChunk > 0 && rng.chance(WORD_THINK_CHANCE)) {
+      emitPause(think(WORD_THINK_MS));
+    }
 
     // Hesitation lands before a word or between its letters, never after the
     // last one (that gap belongs to the following punctuation pause).
@@ -443,7 +518,7 @@ export function humanize(text: string, options: HumanizeOptions = {}): HumanEven
         if (run >= 2) {
           emitPause(rng.range(1_500, 5_000));
           // A paragraph break is the most natural place to walk away.
-          if (charsThisChunk >= MIN_CHUNK_CHARS) emitRest();
+          if (charsThisChunk >= minChunkChars) emitRest();
         } else {
           emitPause(rng.range(400, 900));
         }
@@ -454,13 +529,23 @@ export function humanize(text: string, options: HumanizeOptions = {}): HumanEven
 
       if (char === ',' || char === ';' || char === ':') {
         emitPause(rng.range(150, 400));
+        // Occasionally the clause is where the thought runs out for a moment.
+        if (rng.chance(CLAUSE_THINK_CHANCE)) {
+          emitPause(think(CLAUSE_THINK_MS));
+        }
       } else if (char === '.' || char === '!' || char === '?') {
         // Only pause at the end of the sentence, not between "..." dots.
         const next = chunk[i + 1];
         if (next !== '.' && next !== '!' && next !== '?') {
           emitPause(rng.range(400, 1_200));
           // End of a sentence is the natural seam between bursts.
-          if (charsThisChunk >= MIN_CHUNK_CHARS) emitRest();
+          if (charsThisChunk >= minChunkChars) {
+            emitRest();
+          } else if (rng.chance(SENTENCE_THINK_CHANCE)) {
+            // Not long enough to walk away, but long enough that the document
+            // is sitting untouched while the next sentence is worked out.
+            emitPause(think(SENTENCE_THINK_MS));
+          }
         }
       }
     }

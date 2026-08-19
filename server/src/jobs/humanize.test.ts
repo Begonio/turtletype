@@ -194,6 +194,33 @@ describe('mistakes are left in place and fixed later', () => {
     assert.ok(totalChecked > 20, `expected plenty of corrections to check, saw ${totalChecked}`);
   });
 
+  it('leaves the mistake on the page across a Docs checkpoint', () => {
+    // Google Docs snapshots roughly every two minutes. A mistake corrected
+    // inside one of those windows is never recorded, so the gap between making
+    // it and fixing it has to clear that interval with room to spare — this is
+    // the single property that decides whether corrections show up in history.
+    const DOCS_CHECKPOINT_MS = 120_000;
+    let checked = 0;
+
+    for (let seed = 0; seed < 30; seed++) {
+      const events = humanize(ESSAY, { seed });
+
+      events.forEach((event, index) => {
+        if (event.type !== 'repair') return;
+        const rest = events[index - 1];
+        assert.ok(rest?.type === 'pause' && rest.rest === true, `seed ${seed}: no rest before fix`);
+        assert.ok(
+          rest.duration > DOCS_CHECKPOINT_MS,
+          `seed ${seed}: mistake sat for only ${(rest.duration / 1000).toFixed(0)}s, ` +
+            'which Docs would fold into one revision',
+        );
+        checked += 1;
+      });
+    }
+
+    assert.ok(checked > 10, `expected plenty of corrections to check, saw ${checked}`);
+  });
+
   it('waits a beat before reaching back to fix it', () => {
     const events = eventsFor(3).filter(
       (event): event is Extract<HumanEvent, { type: 'repair' }> => event.type === 'repair',
@@ -305,9 +332,18 @@ describe('duration targeting', () => {
     assert.ok(long > short * 5, `short ${short}ms vs long ${long}ms`);
   });
 
-  it('produces a realistic floor at the production rest interval', () => {
-    // Sanity-check the number a user will actually be shown.
-    const minutes = minimumDurationMs(ESSAY, { humanness: 0.5, seed: 1 }) / 60_000;
-    assert.ok(minutes > 5 && minutes < 60, `${minutes.toFixed(1)} minutes is not a sane floor`);
+  it('produces a realistic floor at the production settings', () => {
+    // Sanity-check the number a user will actually be shown, expressed per 100
+    // characters so the bound stays meaningful whatever the sample is.
+    //
+    // Writing with genuine gaps is slow, and that is the point: the rests are
+    // what Google Docs records as separate revisions. But a floor of hours per
+    // paragraph would mean the tuning had run away, so both ends are pinned.
+    const minutes = minimumDurationMs(ESSAY, { seed: 1 }) / 60_000;
+    const perHundred = (minutes / ESSAY.length) * 100;
+    assert.ok(
+      perHundred > 3 && perHundred < 15,
+      `${perHundred.toFixed(1)} min per 100 chars (${minutes.toFixed(0)} min total) is out of range`,
+    );
   });
 });
