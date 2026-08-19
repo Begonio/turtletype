@@ -1,5 +1,6 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import passport from 'passport';
+import { DOCS_SCOPE_DECLINED } from './scopes.js';
 import { config } from '../config.js';
 
 export const authRouter = Router();
@@ -15,20 +16,30 @@ authRouter.get('/google', (req, res, next) => {
     scope: [...config.google.scopes],
     accessType: 'offline',
     prompt: 'consent',
+    // Carry forward anything this account has already granted, so a retry
+    // after declining the Docs checkbox does not start from scratch.
+    includeGrantedScopes: true,
     // Round-trip where the user wanted to land, but only as a same-site path.
     state: typeof req.query.next === 'string' && req.query.next.startsWith('/') ? req.query.next : undefined,
   })(req, res, next);
 });
 
 authRouter.get('/google/callback', (req: Request, res: Response, next: NextFunction) => {
-  passport.authenticate('google', (err: unknown, user: Express.User | false) => {
+  passport.authenticate(
+    'google',
+    (err: unknown, user: Express.User | false, info?: { message?: string }) => {
     if (err) {
       console.error('[auth] google callback error:', err);
       res.redirect(`${config.clientUrl}/?error=auth_failed`);
       return;
     }
     if (!user) {
-      res.redirect(`${config.clientUrl}/?error=access_denied`);
+      // Signing in without the Docs checkbox ticked is the common case here,
+      // and it needs its own message — "access denied" would send people
+      // looking for the wrong problem.
+      const reason =
+        info?.message === DOCS_SCOPE_DECLINED ? 'missing_permission' : 'access_denied';
+      res.redirect(`${config.clientUrl}/?error=${reason}`);
       return;
     }
     req.logIn(user, (loginErr) => {
@@ -42,7 +53,8 @@ authRouter.get('/google/callback', (req: Request, res: Response, next: NextFunct
         : '/app';
       res.redirect(`${config.clientUrl}${target}`);
     });
-  })(req, res, next);
+    },
+  )(req, res, next);
 });
 
 function destroySession(req: Request, res: Response, done: () => void): void {

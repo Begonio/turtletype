@@ -1,6 +1,7 @@
 import passport from 'passport';
 import { Strategy as GoogleStrategy, type Profile, type VerifyCallback } from 'passport-google-oauth20';
 import { config } from '../config.js';
+import { DOCS_SCOPE_DECLINED, grantedDocumentsAccess, type GoogleTokenParams } from './scopes.js';
 import { findUserById, upsertUser } from '../db/users.js';
 
 declare global {
@@ -10,10 +11,6 @@ declare global {
       id: string;
     }
   }
-}
-
-interface GoogleTokenParams {
-  expires_in?: number;
 }
 
 export function configurePassport(): void {
@@ -36,6 +33,13 @@ export function configurePassport(): void {
           const email = profile.emails?.[0]?.value;
           if (!email) {
             done(null, false, { message: 'Google did not return an email address' });
+            return;
+          }
+
+          if (!grantedDocumentsAccess(params)) {
+            // Refuse the sign-in rather than creating an account that cannot
+            // do the one thing the app exists for.
+            done(null, false, { message: DOCS_SCOPE_DECLINED });
             return;
           }
 

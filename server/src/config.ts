@@ -113,6 +113,12 @@ export const config = {
     get callbackUrl(): string {
       return required('GOOGLE_CALLBACK_URL');
     },
+    /**
+     * The permission the app cannot work without. Google shows sensitive
+     * scopes as a checkbox the user has to tick, and there is no way to
+     * pre-select it, so sign-in has to cope with it being declined.
+     */
+    documentsScope: 'https://www.googleapis.com/auth/documents',
     scopes: [
       'openid',
       'email',

@@ -7,6 +7,9 @@ const AUTH_ERRORS: Record<string, string> = {
   auth_failed: 'Google sign-in did not complete. Please try again.',
   access_denied: 'You declined the permissions TurtleType needs to write to your document.',
   session_failed: 'We could not start a session. Check that cookies are enabled and try again.',
+  missing_permission:
+    'Almost there — on the Google screen you need to tick the box for “See, edit, create and delete all your Google Docs documents”. ' +
+    'Google requires that to be checked by hand and will not pre-select it. Without it TurtleType cannot write anything.',
 };
 
 const STEPS = [
