@@ -8,7 +8,12 @@ export interface UserRow {
   refresh_token: string | null;
   token_expiry: Date | null;
   stripe_customer_id: string | null;
+  stripe_subscription_id: string | null;
   subscription_status: string;
+  /** Credits available to spend. Cached sum of credit_ledger.delta. */
+  credits: number;
+  plan: string | null;
+  current_period_end: Date | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -25,6 +30,7 @@ export interface JobRow {
   total_chars: number;
   chars_written: number;
   error_message: string | null;
+  credits_spent: number;
   created_at: Date;
   started_at: Date | null;
   completed_at: Date | null;
@@ -37,6 +43,9 @@ export interface PublicUser {
   name: string | null;
   avatarUrl: string | null;
   subscriptionStatus: string;
+  /** Credits available to spend, so the composer can price a job before submitting it. */
+  credits: number;
+  plan: string | null;
   createdAt: string;
 }
 
@@ -60,6 +69,8 @@ export function toPublicUser(row: UserRow): PublicUser {
     name: row.name,
     avatarUrl: row.avatar_url,
     subscriptionStatus: row.subscription_status,
+    credits: row.credits,
+    plan: row.plan,
     createdAt: row.created_at.toISOString(),
   };
 }

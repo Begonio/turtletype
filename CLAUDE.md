@@ -33,6 +33,12 @@ Monorepo, npm workspaces, `server/` + `client/`, TypeScript throughout, ESM.
 - React Router
 - `EventSource` for the SSE stream
 
+**Billing (`server/src/billing/`)**
+- Stripe Checkout (packs + one subscription) and the hosted billing portal
+- Credits: 1 credit = 10,000 chars, priced per job and charged on submission
+- `credit_ledger` is the source of truth; `users.credits` is a cache of it
+- Off entirely unless both `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` are set
+
 **Deploy**
 - Multi-stage Dockerfile (tini, non-root user, healthcheck)
 - Railway, Dockerfile builder, pinned to 1 replica
@@ -47,6 +53,11 @@ Monorepo, npm workspaces, `server/` + `client/`, TypeScript throughout, ESM.
 - **Rate limiters are per-job, never shared across users.**
 - **`humanize.ts` is pure and seedable.** No I/O, deterministic given a seed. This is what makes the engine testable — don't introduce side effects into it. The plan's own wall clock is a counter accumulated as events are emitted, never `Date.now()`.
 - **Timing guarantees are measured, not assumed.** The correction gap is computed from the keystroke that made the typo to the edit that fixes it, and topped up only if the plan still owes time. Don't reintroduce blanket multipliers on rests — that was the old approach and it paid for the same guarantee several times over. `DOCS_CHECKPOINT_MS` is the one place the model's assumption about Docs lives; the tests in `humanize.test.ts` under "version-history structure" pin what must not regress when pacing changes.
+- **Credit moves and the ledger row explaining them are written in one transaction.** `users.credits` is a cache of `SUM(credit_ledger.delta)`; `reconcile()` proves they agree. Charging for a job and creating the job row are likewise one transaction.
+- **Billing operations are idempotent via the unique index on `(reason, reference)`**, never via a check-then-act. The index is global, not per-user, so one Stripe session cannot credit two accounts. Idempotency keys are the *payment object* (Checkout session, invoice), not the event id — Stripe emits several events per payment.
+- **Lock the user row before inserting anything that references it.** `INSERT INTO jobs` takes a KEY SHARE lock on `users` for the FK; taking `FOR UPDATE` afterwards is a lock upgrade and two concurrent submissions deadlock. `lockUserCredits` must come first. There is a test for this.
+- **The Stripe webhook route mounts before `express.json`** and takes the raw body — signature verification needs the exact bytes Stripe signed.
+- **Webhooks are the only place credit is created.** A Checkout success URL is just a URL a user can open.
 - **`config.ts` keeps secrets behind getters** so pure modules can be imported in tests without a live database.
 - **`preflight.ts` must stay the first import in `index.ts`.** It validates env before `db/pool.ts` reads it at module load. Reordering imports can silently break env validation.
 - **Regenerate `package-lock.json` whenever `package.json` changes.** A rename passed locally and failed on Railway's `npm ci`, because local dev reuses `node_modules` and never revalidates the lockfile.
@@ -56,6 +67,16 @@ Monorepo, npm workspaces, `server/` + `client/`, TypeScript throughout, ESM.
 `MAX_TEXT_LENGTH` is 200,000 chars, `MAX_JOB_DURATION_MS` caps jobs at 24 hours. At current pacing, anything over roughly 36,000 characters has a minimum runtime that exceeds the job's own max duration (it was ~26,000 before the pacing work in `humanize.ts`). Still unresolved for genuinely long documents. Flag this if asked to raise the length limit further.
 
 The remaining lever is burst size: duration is essentially `bursts x (burst span + rest)`, and burst size is fixed at 55-150 chars regardless of length, so a 40,000-char document plans 348 revisions. No human produces that in one document — real long documents are written across sessions. Scaling `BURST_MIN_CHARS` / `BURST_MAX_CHARS` up with text length would cut the runtime proportionally, but it trades away history granularity (each revision becomes a bigger lump of new text), so it is a product decision, not a tuning one.
+
+## Google OAuth verification
+
+The app is capped at 100 test users because `auth/documents` is a **sensitive**
+scope and the OAuth app is in Testing status. `docs/google-oauth-verification.md`
+covers both routes out: full verification, or switching to the non-sensitive
+`drive.file` scope (which needs a Google Picker for the existing-doc path but
+skips review entirely). `/privacy` and `/terms` exist because verification
+requires them — the `ENTITY` placeholders in `client/src/pages/Legal.tsx` must
+be filled in before submitting.
 
 ## Working conventions
 

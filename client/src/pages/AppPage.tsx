@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import Composer from '../components/Composer';
 import Controls from '../components/Controls';
 import ProgressPanel from '../components/ProgressPanel';
@@ -14,7 +14,10 @@ export default function AppPage() {
   const attachStream = useJobStore((state) => state.attachStream);
   const detachStream = useJobStore((state) => state.detachStream);
   const signOut = useJobStore((state) => state.signOut);
+  const billingEnabled = useJobStore((state) => state.billingEnabled);
+  const refreshCredits = useJobStore((state) => state.refreshCredits);
   const navigate = useNavigate();
+  const [params, setParams] = useSearchParams();
 
   useEffect(() => {
     if (authChecked && !user) navigate('/', { replace: true });
@@ -58,6 +61,22 @@ export default function AppPage() {
 
   useEffect(() => () => detachStream(), [detachStream]);
 
+  /**
+   * Just back from a successful Checkout.
+   *
+   * The success URL is not evidence of payment — Stripe's webhook is — so this
+   * only re-reads the balance, and re-reads it a few times because the webhook
+   * and the browser redirect race each other. The query parameter is cleared
+   * either way so a refresh does not repeat the poll.
+   */
+  useEffect(() => {
+    if (params.get('checkout') !== 'success') return;
+    void refreshCredits();
+    const next = new URLSearchParams(params);
+    next.delete('checkout');
+    setParams(next, { replace: true });
+  }, [params, setParams, refreshCredits]);
+
   if (!authChecked) {
     return (
       <div className="flex min-h-full items-center justify-center text-sm text-ink-400">
@@ -77,6 +96,15 @@ export default function AppPage() {
             turtle<span className="text-accent-500">type</span>
           </Link>
           <div className="flex items-center gap-4">
+            {billingEnabled ? (
+              <Link
+                to="/pricing"
+                className="rounded-full border border-ink-700 px-3 py-1 font-mono text-[11px] text-ink-300 transition hover:border-accent-600/60 hover:text-accent-400"
+                title="Buy credits"
+              >
+                {user.credits} {user.credits === 1 ? 'credit' : 'credits'}
+              </Link>
+            ) : null}
             <span className="hidden text-xs text-ink-400 sm:inline">{user.email}</span>
             {user.avatarUrl ? (
               <img

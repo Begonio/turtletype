@@ -3,6 +3,7 @@ import { Strategy as GoogleStrategy, type Profile, type VerifyCallback } from 'p
 import { config } from '../config.js';
 import { DOCS_SCOPE_DECLINED, grantedDocumentsAccess, type GoogleTokenParams } from './scopes.js';
 import { findUserById, upsertUser } from '../db/users.js';
+import { grantCredits } from '../billing/credits.js';
 
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
@@ -53,6 +54,24 @@ export function configurePassport(): void {
             refreshToken: refreshToken ?? null,
             tokenExpiry: new Date(Date.now() + expiresIn * 1000),
           });
+
+          // One-time welcome credit, so the revision history can be seen
+          // working before anyone is asked to pay. Keyed on the user id, so
+          // signing in again for the tenth time does not grant again.
+          if (config.billing.enabled && config.billing.signupGrantCredits > 0) {
+            try {
+              await grantCredits(
+                user.id,
+                config.billing.signupGrantCredits,
+                'signup_grant',
+                user.id,
+              );
+            } catch (error) {
+              // A failed grant must not block sign-in; the account simply
+              // starts empty and the user can buy credits.
+              console.error(`[billing] signup grant failed for ${user.id}:`, error);
+            }
+          }
 
           done(null, { id: user.id });
         } catch (error) {

@@ -1,3 +1,4 @@
+import { settleJobCredits } from '../billing/credits.js';
 import { query } from './pool.js';
 import type { JobRow, JobStatus } from './types.js';
 
@@ -59,6 +60,15 @@ export async function updateJobStatus(jobId: string, status: JobStatus): Promise
   await query('UPDATE jobs SET status = $2 WHERE id = $1', [jobId, status]);
 }
 
+/**
+ * Marks a job finished and settles what it was charged.
+ *
+ * The refund lives here rather than in the runner because every terminal
+ * transition — the happy path, the failure path, the cancel path, and the
+ * queue's last-resort catch — goes through this function. Anywhere else and
+ * one of them would eventually forget. `settleJobCredits` is idempotent, so
+ * two of those paths firing for the same job still pays back once.
+ */
 export async function finishJob(
   jobId: string,
   status: Extract<JobStatus, 'done' | 'failed' | 'cancelled'>,
@@ -70,6 +80,15 @@ export async function finishJob(
       WHERE id = $1`,
     [jobId, status, errorMessage ?? null],
   );
+
+  try {
+    const refunded = await settleJobCredits(jobId, status);
+    if (refunded > 0) console.log(`[billing] refunded ${refunded} credit(s) for ${status} job ${jobId}`);
+  } catch (error) {
+    // A job's outcome is already recorded; failing to refund must not turn
+    // that into an unhandled rejection. Loud, because it is money.
+    console.error(`[billing] could not settle credits for job ${jobId}:`, error);
+  }
 }
 
 /**
@@ -78,12 +97,23 @@ export async function finishJob(
  * make progress again.
  */
 export async function failOrphanedJobs(): Promise<number> {
-  const { rowCount } = await query(
+  const { rows } = await query<{ id: string }>(
     `UPDATE jobs
         SET status = 'failed',
             error_message = 'Server restarted while this job was running',
             completed_at = NOW()
-      WHERE status IN ('pending', 'running', 'paused')`,
+      WHERE status IN ('pending', 'running', 'paused')
+      RETURNING id`,
   );
-  return rowCount ?? 0;
+
+  // These were charged for and then killed by a restart that was not the
+  // customer's doing, so they get their credits back like any other failure.
+  for (const row of rows) {
+    try {
+      await settleJobCredits(row.id, 'failed');
+    } catch (error) {
+      console.error(`[billing] could not refund orphaned job ${row.id}:`, error);
+    }
+  }
+  return rows.length;
 }

@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 import { isActive, useJobStore } from '../store/useJobStore';
 import { durationToSlider, formatDuration, formatFinishTime, sliderToDuration } from '../lib/format';
 
@@ -12,6 +13,10 @@ export default function Controls() {
   const text = useJobStore((state) => state.text);
   const phase = useJobStore((state) => state.phase);
   const error = useJobStore((state) => state.error);
+  const jobCost = useJobStore((state) => state.jobCost);
+  const billingEnabled = useJobStore((state) => state.billingEnabled);
+  const needsCredits = useJobStore((state) => state.needsCredits);
+  const credits = useJobStore((state) => state.user?.credits ?? 0);
 
   const setDurationMs = useJobStore((state) => state.setDurationMs);
   const setDocMode = useJobStore((state) => state.setDocMode);
@@ -21,7 +26,11 @@ export default function Controls() {
   const locked = isActive(phase);
   const missingDoc = docMode === 'existing' && !docUrlInput.trim();
   const hasEstimate = minDurationMs > 0;
-  const canStart = !locked && text.trim().length > 0 && !missingDoc && hasEstimate;
+  // Priced but unaffordable. The server decides for real; this only avoids
+  // sending a request that is already known to be refused.
+  const cannotAfford = billingEnabled && jobCost > 0 && jobCost > credits;
+  const canStart =
+    !locked && text.trim().length > 0 && !missingDoc && hasEstimate && !cannotAfford;
 
   // No explicit choice means "as fast as is still believable".
   const effectiveMs = Math.max(minDurationMs, durationMs ?? 0);
@@ -144,7 +153,35 @@ export default function Controls() {
         ) : null}
       </fieldset>
 
-      {error && !locked ? (
+      {billingEnabled && hasEstimate ? (
+        <div className="rounded-lg border border-ink-800 bg-ink-850 px-3 py-3">
+          <div className="flex items-baseline justify-between">
+            <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-ink-400">
+              Cost
+            </span>
+            <span className="font-mono text-xs text-ink-200">
+              {jobCost} {jobCost === 1 ? 'credit' : 'credits'}
+            </span>
+          </div>
+          <p className="mt-2 text-xs leading-relaxed text-ink-400">
+            You have {credits}. Credits come back automatically if the job fails.
+          </p>
+        </div>
+      ) : null}
+
+      {cannotAfford || needsCredits ? (
+        <div className="rounded-lg border border-accent-600/40 bg-accent-600/10 px-3 py-3">
+          <p className="text-xs leading-relaxed text-ink-200">
+            This job needs {jobCost} {jobCost === 1 ? 'credit' : 'credits'} and you have {credits}.
+          </p>
+          <Link
+            to="/pricing"
+            className="mt-3 inline-block rounded-lg bg-accent-500 px-3 py-2 text-xs font-semibold text-ink-950 transition hover:bg-accent-400"
+          >
+            Get credits →
+          </Link>
+        </div>
+      ) : error && !locked ? (
         <p className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2.5 text-xs leading-relaxed text-red-200">
           {error}
         </p>

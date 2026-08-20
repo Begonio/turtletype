@@ -166,6 +166,45 @@ export const config = {
     maxJobDurationMs: num('MAX_JOB_DURATION_MS', 24 * 60 * 60 * 1_000),
   },
 
+  /**
+   * Billing.
+   *
+   * Everything here is optional: with no Stripe keys set the app runs exactly
+   * as it did before billing existed — `billing.enabled` is false and the
+   * paywall lets every job through. That keeps local development and the test
+   * suite free of Stripe entirely, and means a misconfigured deploy degrades
+   * to "free for everyone" rather than "nobody can do anything".
+   */
+  billing: {
+    get secretKey(): string {
+      return required('STRIPE_SECRET_KEY');
+    },
+    get webhookSecret(): string {
+      return required('STRIPE_WEBHOOK_SECRET');
+    },
+    /**
+     * Pin the Stripe API version rather than inheriting the account default.
+     * The account default moves when Stripe ships a new version, which would
+     * otherwise change webhook payload shapes under a running deploy.
+     */
+    apiVersion: '2026-07-29.dahlia',
+    /** Billing is off unless both secrets are present. */
+    get enabled(): boolean {
+      return Boolean(process.env.STRIPE_SECRET_KEY && process.env.STRIPE_WEBHOOK_SECRET);
+    },
+    /**
+     * How many characters one credit buys. Credits are the unit the user
+     * sees, and they track the resource the service is actually short of:
+     * a job holds a concurrency slot for a length of time proportional to its
+     * character count, so charging per character is charging per job-hour.
+     */
+    charsPerCredit: num('CHARS_PER_CREDIT', 10_000),
+    /** Credits handed to a new account once, so the revision history can be seen before paying. */
+    signupGrantCredits: num('SIGNUP_GRANT_CREDITS', 1),
+    /** Longest a single job may be, in credits. Guards against one job eating a whole pack. */
+    maxCreditsPerJob: num('MAX_CREDITS_PER_JOB', 20),
+  },
+
   backoff: {
     initialDelayMs: num('BACKOFF_INITIAL_MS', 2_000),
     maxDelayMs: num('BACKOFF_MAX_MS', 32_000),

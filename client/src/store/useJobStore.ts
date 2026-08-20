@@ -28,6 +28,12 @@ interface JobStore {
   maxDurationMs: number;
   /** Separate writing sessions the plan will produce, i.e. expected revisions. */
   bursts: number;
+  /** Credits the current text would cost. 0 when billing is off. */
+  jobCost: number;
+  /** True once the server has told us this deploy charges for anything. */
+  billingEnabled: boolean;
+  /** Set when a job was refused for lack of credits, so the UI can offer the fix. */
+  needsCredits: boolean;
   estimating: boolean;
   /** Plan time left when the last progress event arrived, and when that was. */
   remainingMs: number | null;
@@ -54,6 +60,8 @@ interface JobStore {
 
   // -- actions ---------------------------------------------------------
   loadUser: () => Promise<void>;
+  /** Re-reads the balance after returning from Checkout. */
+  refreshCredits: () => Promise<void>;
   signOut: () => Promise<void>;
   setText: (text: string) => void;
   setDurationMs: (durationMs: number | null) => void;
@@ -128,6 +136,9 @@ export const useJobStore = create<JobStore>()(
       minDurationMs: 0,
       maxDurationMs: 24 * 60 * 60 * 1_000,
       bursts: 0,
+      jobCost: 0,
+      billingEnabled: false,
+      needsCredits: false,
       estimating: false,
       remainingMs: null,
       remainingAt: null,
@@ -153,8 +164,35 @@ export const useJobStore = create<JobStore>()(
         try {
           const { user } = await api.me();
           set({ user, authChecked: true });
+          // Cheap, and it tells the composer whether to show prices at all.
+          void api
+            .catalog()
+            .then(({ enabled }) => set({ billingEnabled: enabled }))
+            .catch(() => {});
         } catch {
           set({ user: null, authChecked: true });
+        }
+      },
+
+      /**
+       * Re-reads the balance from the server.
+       *
+       * Called after returning from Checkout. The success URL is not proof of
+       * payment — Stripe's webhook is — so this polls briefly rather than
+       * assuming the credits have landed: the webhook usually beats the
+       * browser redirect back, but not always.
+       */
+      async refreshCredits() {
+        for (let attempt = 0; attempt < 5; attempt++) {
+          try {
+            const { user } = await api.me();
+            const previous = get().user?.credits ?? 0;
+            set({ user });
+            if (user.credits > previous || attempt === 4) return;
+          } catch {
+            return;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 1_000 * (attempt + 1)));
         }
       },
 
@@ -184,7 +222,7 @@ export const useJobStore = create<JobStore>()(
         estimateController?.abort();
 
         if (!text.trim()) {
-          set({ minDurationMs: 0, bursts: 0, estimating: false });
+          set({ minDurationMs: 0, bursts: 0, jobCost: 0, estimating: false });
           return;
         }
 
@@ -202,6 +240,7 @@ export const useJobStore = create<JobStore>()(
                 minDurationMs: estimate.minDurationMs,
                 maxDurationMs: estimate.maxDurationMs,
                 bursts: estimate.bursts,
+                jobCost: estimate.credits,
                 estimating: false,
                 // Keep an explicit choice, but never below the new floor.
                 durationMs:
@@ -226,6 +265,7 @@ export const useJobStore = create<JobStore>()(
           phase: 'starting',
           error: null,
           notice: null,
+          needsCredits: false,
           preview: '',
           previewDropped: 0,
           pct: 0,
@@ -247,18 +287,20 @@ export const useJobStore = create<JobStore>()(
             ...(docMode === 'existing' && docUrlInput.trim() ? { docId: docUrlInput.trim() } : {}),
           });
 
-          set({
+          set((state) => ({
             jobId: response.jobId,
             docUrl: response.docUrl,
             totalChars: response.totalChars,
             estimatedMs: response.estimatedMs,
             minDurationMs: response.minDurationMs,
             bursts: response.bursts,
+            // The server is authoritative about what was actually charged.
+            user: state.user ? { ...state.user, credits: response.creditsRemaining } : state.user,
             phase: response.started ? 'running' : 'pending',
             notice: response.started
               ? null
               : `Queued at position ${response.queuePosition} — it will start automatically.`,
-          });
+          }));
 
           get().attachStream(response.jobId);
         } catch (error) {
@@ -266,6 +308,14 @@ export const useJobStore = create<JobStore>()(
           // fix from this screen — send them straight back through consent.
           if (error instanceof ApiError && error.code === 'REAUTH_REQUIRED') {
             window.location.href = loginUrl('/app');
+            return;
+          }
+          // Out of credits is not a failure of the job — the text is still in
+          // the composer and the only thing missing is a purchase. Say so
+          // without dropping into the 'failed' phase, which reads as an error
+          // and hides the start button behind a reset.
+          if (error instanceof ApiError && error.code === 'INSUFFICIENT_CREDITS') {
+            set({ phase: 'idle', error: error.message, needsCredits: true });
             return;
           }
           const message =
