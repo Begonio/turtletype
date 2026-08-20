@@ -74,12 +74,36 @@ export interface HumanizeOptions {
 export const DEFAULT_MIN_CHUNK_REST_MS = 150_000;
 
 /**
- * A rest with an uncorrected mistake waiting runs longer still, to guarantee
- * the wrong text is on the page across at least one checkpoint before the
- * correction arrives. This is what puts the mistake *and* its fix in the
- * history as two separate versions.
+ * Docs' own checkpoint cadence, as this engine models it. Every timing
+ * guarantee below is expressed as a margin over this number rather than as a
+ * magic constant, so retuning the model means changing one line.
  */
-const TYPO_REST_MULTIPLIER = { min: 1.8, max: 2.6 };
+export const DOCS_CHECKPOINT_MS = 120_000;
+
+/**
+ * How long a mistake must sit in the document before it is corrected.
+ *
+ * Measured from the keystroke that made it to the edit that fixes it — not
+ * from the start of the rest. That distinction is the whole point: a typo made
+ * mid-burst has already been on the page for the rest of that burst, and
+ * previously that time was thrown away and the following rest inflated to
+ * nearly six minutes to re-buy a guarantee the plan had mostly paid for
+ * already.
+ *
+ * The margin over the checkpoint interval is generous because the phase of
+ * Docs' clock is unknowable: a checkpoint could fire a moment before the
+ * mistake is typed, so the gap has to cover most of a second interval too.
+ */
+const CORRECTION_GAP_MS = Math.round(DOCS_CHECKPOINT_MS * 1.6);
+
+/**
+ * How many rests a mistake waits through before being noticed. Waiting two
+ * puts a whole burst of unrelated writing between the mistake and its fix, so
+ * the correction lands as a standalone edit in a later revision rather than at
+ * the head of the very next one — which is what rereading actually looks like,
+ * and costs nothing, because that rest was going to happen anyway.
+ */
+const CORRECTION_DEFERRAL_CHANCE = 0.45;
 
 /** Per-character delay, in milliseconds. Never scaled — humans type at human speed. */
 const CHAR_DELAY_MEAN = 100;
@@ -101,31 +125,62 @@ export const DEFAULT_HUMANNESS = 0.85;
 const HESITATION_CHANCE = 0.05;
 
 /**
- * Longer stop-and-think pauses *inside* a burst, at clause and sentence
- * boundaries. These are not rests — no correction happens — but they stretch a
- * burst across a minute or so instead of eight seconds.
+ * Not every burst is written the same way, and the difference is the single
+ * biggest lever on how long a job takes.
  *
- * That matters for the same reason the rests do: Docs checkpoints on its own
- * clock, so a burst delivered in one short blast is captured as a single lump
- * of new text. Spread the same characters over a longer window and the
- * snapshots land mid-sentence, which is what composing actually looks like.
+ * A *flow* burst is a sentence the writer already had in their head: it goes
+ * down in twenty seconds and Docs captures it as one tidy revision. A
+ * *laboured* burst is one being worked out on the page, with real gaps at
+ * clause and sentence boundaries, and it deliberately runs past the checkpoint
+ * interval so a snapshot lands in the middle of it — a revision ending
+ * mid-clause, which no paste ever produces.
+ *
+ * The engine used to think a little in *every* burst, which spent the time
+ * everywhere and bought the mid-sentence snapshot almost nowhere: the median
+ * burst landed at ~94s, just *under* the checkpoint interval, so Docs captured
+ * it whole anyway and the thinking was invisible. Splitting bursts into two
+ * modes spends the same idea where it actually registers — the share of bursts
+ * that run past a checkpoint is unchanged at ~32%, but they now clear it
+ * decisively instead of hovering at the boundary, and the other two thirds
+ * cost twenty seconds instead of ninety.
+ */
+const LABOURED_BURST_CHANCE = 0.32;
+
+/**
+ * The stall that makes a laboured burst count: one long stop, mid-writing,
+ * while the next phrase gets worked out.
+ *
+ * Every laboured burst gets exactly one, and it is drawn long enough that the
+ * burst clears the checkpoint interval on its own. Scattering the same time
+ * across many small pauses looked reasonable but was not reliable — on prose
+ * with short sentences a burst ends before enough of them accumulate, and the
+ * burst is snapshotted whole after all. Committing to one stall makes the
+ * mid-sentence revision a property of the plan rather than a lucky draw, which
+ * is also what lets the engine afford far fewer laboured bursts.
+ *
+ * Placed at a word boundary partway through the burst, so the snapshot lands
+ * mid-clause rather than at a tidy seam.
+ */
+const STALL_MS = { min: 105_000, max: 210_000 };
+const STALL_CHANCE_PER_WORD = 0.4;
+
+/**
+ * The lighter thinking around the stall, so a laboured burst is not one long
+ * freeze surrounded by metronome typing. Laboured bursts only.
  */
 const SENTENCE_THINK_CHANCE = 0.7;
 const SENTENCE_THINK_MS = { min: 8_000, max: 35_000 };
 const CLAUSE_THINK_CHANCE = 0.3;
 const CLAUSE_THINK_MS = { min: 3_000, max: 14_000 };
-
-/**
- * Working out the next phrase, mid-sentence.
- *
- * This is the one that gets sub-sentence granularity into version history. A
- * 70-character sentence typed straight through takes seven seconds, so Docs
- * only ever sees it complete. Stretch that sentence across a couple of minutes
- * and the snapshot lands halfway through it — a revision ending mid-clause,
- * which no paste ever produces.
- */
 const WORD_THINK_CHANCE = 0.22;
 const WORD_THINK_MS = { min: 5_000, max: 30_000 };
+
+/**
+ * A flow burst still is not a metronome — the writer pauses at a comma, just
+ * not for long enough to matter to Docs.
+ */
+const FLOW_CLAUSE_THINK_CHANCE = 0.25;
+const FLOW_CLAUSE_THINK_MS = { min: 800, max: 3_000 };
 
 /** Words so ingrained they come out as a single burst. */
 const FAST_WORDS = new Set(['the', 'and', 'is', 'to', 'a', 'of', 'in']);
@@ -309,13 +364,36 @@ export function humanize(text: string, options: HumanizeOptions = {}): HumanEven
   /** Net characters this job has put in the document so far. */
   let writtenLength = 0;
   /**
+   * Running wall-clock position in the plan, so timing guarantees can be
+   * checked against what the plan actually does rather than assumed. Kept as a
+   * plain counter rather than read from a clock — this module stays pure.
+   */
+  let elapsedMs = 0;
+  /**
+   * Whether the burst being written is being worked out on the page or simply
+   * transcribed from the writer's head. See LABOURED_BURST_CHANCE.
+   */
+  let labouredBurst = rng.chance(LABOURED_BURST_CHANCE);
+  /** Whether this laboured burst still owes its one long stall. */
+  let stallOwed = labouredBurst;
+  /**
    * A mistake left in the text, waiting to be noticed.
    *
    * Only one is outstanding at a time. That keeps the offset arithmetic honest
    * — a repair shifts every position after it — and matches how people work:
    * you notice the last thing you got wrong, not four of them at once.
+   *
+   * `madeAtMs` is when the wrong keystroke landed and `restsToWait` how many
+   * more breaks pass before it gets spotted; together they let the rest that
+   * carries the fix be sized to the gap that is actually still owed.
    */
-  let pendingTypo: { offset: number; remove: number; insert: string } | null = null;
+  let pendingTypo: {
+    offset: number;
+    remove: number;
+    insert: string;
+    madeAtMs: number;
+    restsToWait: number;
+  } | null = null;
 
   const charDelay = (fast: boolean): number => {
     const base = rng.gaussian(CHAR_DELAY_MEAN, CHAR_DELAY_SD, CHAR_DELAY_MIN, CHAR_DELAY_MAX);
@@ -323,7 +401,9 @@ export function humanize(text: string, options: HumanizeOptions = {}): HumanEven
   };
 
   const emitChar = (char: string, fast: boolean): void => {
-    events.push({ type: 'type', char, delay: charDelay(fast) });
+    const delay = charDelay(fast);
+    events.push({ type: 'type', char, delay });
+    elapsedMs += delay;
     charsThisChunk += 1;
     writtenLength += 1;
   };
@@ -333,48 +413,62 @@ export function humanize(text: string, options: HumanizeOptions = {}): HumanEven
   };
 
   const emitPause = (ms: number): void => {
-    events.push({ type: 'pause', duration: Math.max(1, Math.round(ms)) });
+    const duration = Math.max(1, Math.round(ms));
+    events.push({ type: 'pause', duration });
+    elapsedMs += duration;
   };
 
   /**
    * Stop and think. Only emitted between bursts, and only these pauses grow
    * when the job is stretched over a longer target duration.
+   *
+   * `force` is used once, at the end of the text, where an outstanding mistake
+   * has to be fixed whether or not it has waited its full number of breaks.
    */
-  const emitRest = (): void => {
+  const emitRest = (force = false): void => {
     if (charsThisChunk === 0 && !pendingTypo) return;
 
-    // A mistake left on the page needs to still be there when Docs takes its
-    // next snapshot, so walk away for noticeably longer before coming back to
-    // fix it. Otherwise the wrong text and the correction land in the same
-    // revision and neither is visible.
-    const spread = pendingTypo
-      ? rng.range(TYPO_REST_MULTIPLIER.min, TYPO_REST_MULTIPLIER.max)
-      : rng.range(1, 1.6);
+    let duration = Math.round(minRest * rng.range(1, 1.45));
 
-    events.push({
-      type: 'pause',
-      duration: Math.round(minRest * spread),
-      rest: true,
-    });
+    // Is this the break where the mistake gets spotted?
+    const fixingNow = pendingTypo !== null && (force || pendingTypo.restsToWait <= 1);
+
+    if (pendingTypo && fixingNow) {
+      // The mistake has to have been on the page across a Docs checkpoint, and
+      // the time since it was typed already counts towards that: the rest of
+      // the burst, and any earlier breaks it waited through. Only top the rest
+      // up by whatever gap is still owed, instead of inflating every rest that
+      // happens to be carrying one.
+      const alreadyWaited = elapsedMs - pendingTypo.madeAtMs;
+      const shortfall = CORRECTION_GAP_MS - (alreadyWaited + duration);
+      if (shortfall > 0) duration += Math.round(shortfall);
+    }
+
+    events.push({ type: 'pause', duration, rest: true });
+    elapsedMs += duration;
     charsThisChunk = 0;
+    // The next stretch of writing may go down easily or may have to be worked
+    // out; that is decided here, once per burst.
+    labouredBurst = rng.chance(LABOURED_BURST_CHANCE);
+    stallOwed = labouredBurst;
+
     // Coming back to the document is when you reread and spot the mistake.
     // Fixing it here — after the gap, not a second after making it — is the
     // whole point: the typo has been sitting in the document long enough for
     // Docs to have recorded it, so the correction shows up as its own edit.
-    repairPendingTypo();
+    if (pendingTypo) {
+      if (fixingNow) repairPendingTypo();
+      else pendingTypo.restsToWait -= 1;
+    }
   };
 
   const repairPendingTypo = (): void => {
     if (!pendingTypo) return;
     const { offset, remove, insert } = pendingTypo;
-    events.push({
-      type: 'repair',
-      offset,
-      remove,
-      insert,
-      // Reading back, spotting it, moving the cursor there.
-      delay: Math.round(rng.range(600, 2_200)),
-    });
+    // Reading back, spotting it, moving the cursor there.
+    const delay = Math.round(rng.range(600, 2_200));
+    events.push({ type: 'repair', offset, remove, insert, delay });
+    elapsedMs += delay;
     writtenLength += insert.length - remove;
     pendingTypo = null;
   };
@@ -393,8 +487,9 @@ export function humanize(text: string, options: HumanizeOptions = {}): HumanEven
 
   // A mistake made in the last burst still has to be found. Step away, come
   // back, fix it — which also leaves the job ending on the correction rather
-  // than on raw typing.
-  if (pendingTypo) emitRest();
+  // than on raw typing. There is no more text to write, so it is fixed at this
+  // break whatever its deferral said.
+  if (pendingTypo) emitRest(true);
 
   // Any pause at the very end just delays the job reporting itself finished;
   // there is nothing left to type after it.
@@ -411,10 +506,22 @@ export function humanize(text: string, options: HumanizeOptions = {}): HumanEven
   function typeWord(word: string): void {
     const fast = FAST_WORDS.has(word.toLowerCase());
 
-    // Stopping mid-sentence to work out the next phrase. Long enough that a
-    // Docs snapshot can land inside a sentence rather than only ever between
-    // finished ones.
-    if (charsThisChunk > 0 && rng.chance(WORD_THINK_CHANCE)) {
+    // The one long stall this burst owes. It fires at a random word boundary
+    // once a few characters are down, but is forced before the burst can reach
+    // the length at which it is allowed to end — otherwise a burst on
+    // short-sentence prose could finish still owing it, and be snapshotted
+    // whole.
+    if (stallOwed && charsThisChunk >= 8) {
+      const lastChance = charsThisChunk >= minChunkChars * 0.8;
+      if (lastChance || rng.chance(STALL_CHANCE_PER_WORD)) {
+        emitPause(think(STALL_MS));
+        stallOwed = false;
+      }
+    }
+
+    // Stopping mid-sentence to work out the next phrase. Only in a burst that
+    // is being composed rather than transcribed — see LABOURED_BURST_CHANCE.
+    if (labouredBurst && charsThisChunk > 0 && rng.chance(WORD_THINK_CHANCE)) {
       emitPause(think(WORD_THINK_MS));
     }
 
@@ -455,6 +562,12 @@ export function humanize(text: string, options: HumanizeOptions = {}): HumanEven
       offset,
       remove: typo.wrong.length,
       insert: word.slice(typo.at, typo.at + typo.consumed),
+      // The clock starts at the wrong keystroke, not at the next break: the
+      // remainder of this burst is time the mistake is already on the page.
+      madeAtMs: elapsedMs,
+      // Usually spotted at the next break; often not until the one after,
+      // which puts a whole burst of unrelated writing in between.
+      restsToWait: rng.chance(CORRECTION_DEFERRAL_CHANCE) ? 2 : 1,
     };
 
     emitString(word.slice(typo.at + typo.consumed), fast);
@@ -530,8 +643,11 @@ export function humanize(text: string, options: HumanizeOptions = {}): HumanEven
       if (char === ',' || char === ';' || char === ':') {
         emitPause(rng.range(150, 400));
         // Occasionally the clause is where the thought runs out for a moment.
-        if (rng.chance(CLAUSE_THINK_CHANCE)) {
-          emitPause(think(CLAUSE_THINK_MS));
+        // In a flow burst that is a beat, not a break — long enough to read as
+        // human, too short for Docs to snapshot inside it.
+        const chance = labouredBurst ? CLAUSE_THINK_CHANCE : FLOW_CLAUSE_THINK_CHANCE;
+        if (rng.chance(chance)) {
+          emitPause(think(labouredBurst ? CLAUSE_THINK_MS : FLOW_CLAUSE_THINK_MS));
         }
       } else if (char === '.' || char === '!' || char === '?') {
         // Only pause at the end of the sentence, not between "..." dots.
@@ -541,7 +657,7 @@ export function humanize(text: string, options: HumanizeOptions = {}): HumanEven
           // End of a sentence is the natural seam between bursts.
           if (charsThisChunk >= minChunkChars) {
             emitRest();
-          } else if (rng.chance(SENTENCE_THINK_CHANCE)) {
+          } else if (labouredBurst && rng.chance(SENTENCE_THINK_CHANCE)) {
             // Not long enough to walk away, but long enough that the document
             // is sitting untouched while the next sentence is worked out.
             emitPause(think(SENTENCE_THINK_MS));
