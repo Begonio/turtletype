@@ -219,6 +219,48 @@ without the other fails in a way that does not mention the other. If the
 fails with `403 SERVICE_DISABLED` no matter how the consent screen is
 configured. Check it before blaming scopes.
 
+### Homepage requirements
+
+Review rejected the homepage twice, so these are not optional and they are
+checked by a person, not a crawler. What Google asks for, and where it now
+lives:
+
+| Requirement | Where it is met |
+|---|---|
+| Accurately identifies the app and brand | `<h1>TurtleType</h1>`, and the operator named in the footer |
+| Fully describes functionality | "What TurtleType does" section |
+| Explains why user data is requested | "Why TurtleType asks for access to your Google account" section |
+| Hosted on a verified domain you own | `type.turtlegames.org` — verify `turtlegames.org` in Search Console |
+| Not on a third-party platform | Own domain, own deploy |
+| Links to the privacy policy | Header nav and footer, `/privacy` |
+| Visible without logging in | The homepage no longer redirects signed-in visitors |
+
+Three of these have bitten this project already:
+
+**The app name must match the consent screen exactly.** The wordmark used to
+render as lowercase `turtletype` while the consent screen said `TurtleType`,
+and review rejected it as a mismatch. The name now comes from
+`client/src/components/Wordmark.tsx`, which exists so there is one place to get
+this right. Do not restyle it to lowercase, and do not replace it with an image
+— a name that only appears inside a logo cannot be read as matching.
+
+**The homepage must stay visible after sign-in.** It used to redirect anyone
+with a session to `/app`, which meant the reviewer — who signs in to test the
+app and then returns to the homepage URL — could not see it at all. "Visible
+without requiring login" is not satisfied by a page that disappears once you
+have logged in. There is a comment in `Landing.tsx` saying so; do not
+reintroduce the redirect.
+
+**The data explanation has to be findable.** It was one line of grey small
+print under the sign-in button, which is not "explain with transparency". It is
+now a section with a heading, listing each permission and what is never done
+with it, saying the same things as `/privacy`.
+
+The homepage URL you enter on the consent screen must be the page that actually
+satisfies all of this — `https://type.turtlegames.org`, not a deep link — and
+the privacy policy URL there must match the one the homepage links to, exactly,
+including the scheme and any trailing slash.
+
 ### Scope justification
 
 The field the review turns on. Paste this, adjusting only the operator name:

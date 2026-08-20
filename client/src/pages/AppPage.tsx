@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import Wordmark from '../components/Wordmark';
 import Composer from '../components/Composer';
 import Controls from '../components/Controls';
 import ProgressPanel from '../components/ProgressPanel';
@@ -93,7 +94,7 @@ export default function AppPage() {
       <header className="border-b border-ink-800">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
           <Link to="/" className="font-mono text-sm tracking-tight text-ink-200">
-            turtle<span className="text-accent-500">type</span>
+            <Wordmark />
           </Link>
           <div className="flex items-center gap-4">
             {billingEnabled ? (

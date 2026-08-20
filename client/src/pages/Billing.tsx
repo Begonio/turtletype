@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import Wordmark from '../components/Wordmark';
 import { ApiError, api, type BillingSummary, type CatalogResponse } from '../lib/api';
 import { useJobStore } from '../store/useJobStore';
 
@@ -76,7 +77,7 @@ export default function Billing() {
       <header className="border-b border-ink-800">
         <div className="mx-auto flex max-w-3xl items-center justify-between px-6 py-4">
           <Link to="/app" className="font-mono text-sm tracking-tight text-ink-200">
-            turtle<span className="text-accent-500">type</span>
+            <Wordmark />
           </Link>
           <Link to="/app" className="text-sm text-ink-300 transition hover:text-ink-200">
             ← Back to the app

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import Wordmark from '../components/Wordmark';
 import { api, type LegalEntity } from '../lib/api';
 
 /**
@@ -74,7 +75,7 @@ function Shell({
     <div className="min-h-full bg-ink-950">
       <header className="mx-auto flex max-w-3xl items-center justify-between px-6 py-6">
         <Link to="/" className="font-mono text-sm tracking-tight text-ink-200">
-          turtle<span className="text-accent-500">type</span>
+          <Wordmark />
         </Link>
         <nav className="flex items-center gap-5 text-sm text-ink-300">
           <Link to="/privacy" className="transition hover:text-ink-200">
