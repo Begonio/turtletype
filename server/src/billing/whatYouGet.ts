@@ -28,6 +28,23 @@ const REFERENCE_PROSE = `The question of whether a document was written or paste
 /** Document sizes a customer might recognise themselves in. */
 const REFERENCE_SIZES = [1_000, 3_000, 5_000, 10_000, 20_000] as const;
 
+/**
+ * The sizes actually published: the set above plus whatever one credit buys,
+ * so the table always contains a row costing exactly one credit.
+ *
+ * The pricing page's "read this first" callout looks that row up by character
+ * count to say how long one credit's worth of writing takes. Before the credit
+ * unit was recalibrated it happened to be 10,000 characters, which was already
+ * in the list; leaving the list fixed would have left the callout quoting
+ * whichever row came last instead — a real number attached to the wrong claim,
+ * which is worse than no number.
+ */
+function referenceSizes(charsPerCredit: number): number[] {
+  const sizes = new Set<number>(REFERENCE_SIZES);
+  sizes.add(charsPerCredit);
+  return [...sizes].sort((a, b) => a - b);
+}
+
 /** Seeds averaged over, so one unlucky plan does not set the published figure. */
 const SEEDS = [1, 2, 3, 4, 5, 6, 7] as const;
 
@@ -59,7 +76,7 @@ let cached: ReferencePoint[] | null = null;
 export function referencePoints(): ReferencePoint[] {
   if (cached) return cached;
 
-  cached = REFERENCE_SIZES.map((chars) => {
+  cached = referenceSizes(config.billing.charsPerCredit).map((chars) => {
     const text = sampleOf(chars);
     const plans = SEEDS.map((seed) =>
       humanize(text, {

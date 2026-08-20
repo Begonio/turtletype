@@ -12,6 +12,7 @@
  * `railway run npm run launch:check -w server`, so it reads the variables the
  * deployed service actually has rather than the ones in your .env.
  */
+import { referencePoints } from './billing/whatYouGet.js';
 import { config } from './config.js';
 import { launchReport, legalReport, type LaunchProblem } from './launchChecks.js';
 
@@ -33,7 +34,17 @@ function main(): void {
   console.log(`  client URL       ${config.clientUrl}`);
   console.log(`  billing          ${config.billing.enabled ? 'ENABLED' : 'DISABLED'}`);
   console.log(`  free mode        ${config.billing.freeModeAllowed ? 'ON (jobs are free)' : 'off'}`);
-  console.log(`  credit unit      1 credit = ${config.billing.charsPerCredit.toLocaleString()} chars`);
+  // Measured, not asserted. The credit unit is defined as five hours of
+  // typing, so the check that matters before a launch is whether it still is —
+  // and the only honest way to print that is to run the planner.
+  const oneCredit = referencePoints().find((row) => row.chars === config.billing.charsPerCredit);
+  const hours = oneCredit
+    ? `~${(oneCredit.durationMs / 3_600_000).toFixed(1)}h of typing`
+    : 'unmeasured';
+  console.log(
+    `  credit unit      1 credit = ${config.billing.charsPerCredit.toLocaleString()} chars ` +
+      `(${hours}), charged in steps of 0.01`,
+  );
   console.log(`  signup grant     ${config.billing.signupGrantCredits} credit(s)`);
   console.log(`  operator         ${config.legal.operator}`);
   console.log(`  support email    ${config.legal.contactEmail}`);

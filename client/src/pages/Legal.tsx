@@ -344,9 +344,10 @@ export function Terms() {
 
       <Section heading="Credits and payment">
         <p>
-          Jobs are priced in credits. One credit covers a fixed number of characters, shown on the
-          pricing page, and the cost of a job is shown before you start it. Credits bought in a
-          pack do not expire. Credits included with a subscription are added to your balance each
+          Jobs are priced in credits by the length of the text, charged to a hundredth of a credit
+          and rounded up to that hundredth, so a short piece costs a fraction of a credit rather
+          than a whole one. How many characters one credit covers is shown on the pricing page, and
+          the cost of a job is shown before you start it. Credits bought in a pack do not expire. Credits included with a subscription are added to your balance each
           billing period and likewise do not expire.
         </p>
         <p>

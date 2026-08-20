@@ -1,3 +1,4 @@
+import { formatCreditsWithUnit } from '../billing/amount.js';
 import { settleJobCredits } from '../billing/credits.js';
 import { query } from './pool.js';
 import type { JobRow, JobStatus } from './types.js';
@@ -83,7 +84,11 @@ export async function finishJob(
 
   try {
     const refunded = await settleJobCredits(jobId, status);
-    if (refunded > 0) console.log(`[billing] refunded ${refunded} credit(s) for ${status} job ${jobId}`);
+    if (refunded > 0) {
+      console.log(
+        `[billing] refunded ${formatCreditsWithUnit(refunded)} for ${status} job ${jobId}`,
+      );
+    }
   } catch (error) {
     // A job's outcome is already recorded; failing to refund must not turn
     // that into an unhandled rejection. Loud, because it is money.

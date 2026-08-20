@@ -354,10 +354,22 @@ origin and `NODE_ENV=production`; the session cookie automatically switches to
 
 ## Billing
 
-Jobs are paid for in credits: **1 credit = 10,000 characters**, rounded up, priced and charged when
-the job is submitted. Packs never expire; there is also one monthly plan. Stripe Checkout takes the
-money and Stripe's hosted portal handles cards, invoices and cancellation, so card details never
-reach this service.
+Jobs are paid for in credits: **one credit is five hours of typing**, which at the planner's
+measured pace of about 1,540 characters an hour is 7,700 characters. Jobs are priced by length and
+charged in steps of **0.01 credits** — roughly 77 characters — so a short note costs a few
+hundredths rather than a whole credit, rounded up to the next hundredth and never free. The price is
+fixed and charged when the job is submitted. Packs never expire; there is also one monthly plan.
+Stripe Checkout takes the money and Stripe's hosted portal handles cards, invoices and cancellation,
+so card details never reach this service.
+
+`CHARS_PER_CREDIT` is derived from the five-hour definition rather than chosen, and a test in
+`billing/credits.test.ts` runs the real planner over exactly one credit's worth of text and fails if
+the two have drifted apart — the same discipline `whatYouGet.ts` applies to the pricing page.
+
+Because credits are fractional, the columns holding them are `NUMERIC(12, 2)` and every arithmetic
+step goes through `billing/amount.ts`, which works in whole hundredths. Nothing adds a balance as a
+float: `0.1 + 0.2` is not `0.3` in binary floating point, and a balance carrying that error stops
+matching the ledger it summarises.
 
 `credit_ledger` is the source of truth and `users.credits` is a cache of its sum — `reconcile()`
 proves they agree. Credit moves and the ledger row explaining them are written in one transaction,

@@ -5,6 +5,7 @@ import Composer from '../components/Composer';
 import Controls from '../components/Controls';
 import ProgressPanel from '../components/ProgressPanel';
 import { api } from '../lib/api';
+import { formatCreditsWithUnit } from '../lib/credits';
 import { isTerminal, useJobStore } from '../store/useJobStore';
 
 export default function AppPage() {
@@ -103,7 +104,7 @@ export default function AppPage() {
                 className="rounded-full border border-ink-700 px-3 py-1 font-mono text-[11px] text-ink-300 transition hover:border-accent-600/60 hover:text-accent-400"
                 title="Balance, history and billing"
               >
-                {user.credits} {user.credits === 1 ? 'credit' : 'credits'}
+                {formatCreditsWithUnit(user.credits)}
               </Link>
             ) : null}
             <span className="hidden text-xs text-ink-400 sm:inline">{user.email}</span>

@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { isActive, useJobStore } from '../store/useJobStore';
 import { durationToSlider, formatDuration, formatFinishTime, sliderToDuration } from '../lib/format';
+import { formatCredits, formatCreditsWithUnit } from '../lib/credits';
 
 export default function Controls() {
   const durationMs = useJobStore((state) => state.durationMs);
@@ -160,11 +161,12 @@ export default function Controls() {
               Cost
             </span>
             <span className="font-mono text-xs text-ink-200">
-              {jobCost} {jobCost === 1 ? 'credit' : 'credits'}
+              {formatCreditsWithUnit(jobCost)}
             </span>
           </div>
           <p className="mt-2 text-xs leading-relaxed text-ink-400">
-            You have {credits}. Credits come back automatically if the job fails.
+            You have {formatCredits(credits)}. Jobs are priced by length, to a hundredth of a
+            credit, and credits come back automatically if the job fails.
           </p>
         </div>
       ) : null}
@@ -172,7 +174,7 @@ export default function Controls() {
       {cannotAfford || needsCredits ? (
         <div className="rounded-lg border border-accent-600/40 bg-accent-600/10 px-3 py-3">
           <p className="text-xs leading-relaxed text-ink-200">
-            This job needs {jobCost} {jobCost === 1 ? 'credit' : 'credits'} and you have {credits}.
+            This job needs {formatCreditsWithUnit(jobCost)} and you have {formatCredits(credits)}.
           </p>
           <Link
             to="/pricing"
