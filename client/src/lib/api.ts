@@ -39,7 +39,47 @@ export interface CurrentUser {
   name: string | null;
   avatarUrl: string | null;
   subscriptionStatus: string;
+  /** Credits available to spend. Always 0 on a deploy with billing switched off. */
+  credits: number;
+  plan: string | null;
   createdAt: string;
+}
+
+export interface PricedSku {
+  id: string;
+  kind: 'pack' | 'plan';
+  name: string;
+  amountCents: number;
+  currency: string;
+  credits: number;
+  blurb: string;
+  highlight?: boolean;
+  /** False when this deploy has no Stripe price wired to the SKU. */
+  available: boolean;
+  centsPerCredit: number;
+}
+
+export interface CatalogResponse {
+  /** False on a self-hosted or local deploy: everything is free and the paywall is off. */
+  enabled: boolean;
+  charsPerCredit: number;
+  maxCreditsPerJob: number;
+  skus: PricedSku[];
+  credits: number | null;
+}
+
+export interface BillingSummary {
+  credits: number;
+  plan: string | null;
+  subscriptionStatus: string;
+  currentPeriodEnd: string | null;
+  hasBillingAccount: boolean;
+  ledger: Array<{
+    delta: number;
+    balanceAfter: number;
+    reason: string;
+    createdAt: string;
+  }>;
 }
 
 export type JobStatus = 'pending' | 'running' | 'paused' | 'done' | 'failed' | 'cancelled';
@@ -57,6 +97,9 @@ export interface CreateJobResponse {
   bursts: number;
   /** Mistakes the plan will make and later go back to fix. */
   typos: number;
+  /** Credits this job cost. Zero when billing is off. */
+  creditsSpent: number;
+  creditsRemaining: number;
 }
 
 export interface EstimateResponse {
@@ -65,6 +108,9 @@ export interface EstimateResponse {
   typos: number;
   totalChars: number;
   maxDurationMs: number;
+  /** What this text would cost to write, so the price is visible before submitting. */
+  credits: number;
+  creditsAvailable: number;
 }
 
 export interface JobSnapshot {
@@ -107,6 +153,24 @@ export const api = {
   cancelJob: (jobId: string) => request<{ ok: true }>(`/api/jobs/${jobId}`, { method: 'DELETE' }),
 
   logout: () => request<{ ok: true }>('/auth/logout', { method: 'POST' }),
+
+  catalog: () => request<CatalogResponse>('/api/billing/catalog'),
+
+  billingSummary: () => request<BillingSummary>('/api/billing/me'),
+
+  /**
+   * Starts a Stripe Checkout session. Returns the URL to send the browser to —
+   * the redirect is left to the caller so the button can show a pending state
+   * until the navigation actually happens.
+   */
+  checkout: (skuId: string) =>
+    request<{ url: string }>('/api/billing/checkout', {
+      method: 'POST',
+      body: JSON.stringify({ skuId }),
+    }),
+
+  /** Stripe's hosted portal: invoices, cards, cancellation. */
+  billingPortal: () => request<{ url: string }>('/api/billing/portal', { method: 'POST' }),
 };
 
 export const streamUrl = (jobId: string): string => `${BASE}/api/jobs/${jobId}/stream`;

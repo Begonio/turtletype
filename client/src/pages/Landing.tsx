@@ -44,11 +44,16 @@ export default function Landing() {
         <span className="font-mono text-sm tracking-tight text-ink-200">
           turtle<span className="text-accent-500">type</span>
         </span>
-        {authChecked && user ? (
-          <Link to="/app" className="text-sm text-ink-300 transition hover:text-ink-200">
-            Open the app →
+        <nav className="flex items-center gap-5 text-sm">
+          <Link to="/pricing" className="text-ink-300 transition hover:text-ink-200">
+            Pricing
           </Link>
-        ) : null}
+          {authChecked && user ? (
+            <Link to="/app" className="text-ink-300 transition hover:text-ink-200">
+              Open the app →
+            </Link>
+          ) : null}
+        </nav>
       </header>
 
       <main className="mx-auto max-w-5xl px-6">

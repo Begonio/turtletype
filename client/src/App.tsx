@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import AppPage from './pages/AppPage';
 import Landing from './pages/Landing';
+import Pricing from './pages/Pricing';
 import { useJobStore } from './store/useJobStore';
 
 export default function App() {
@@ -16,6 +17,7 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Landing />} />
         <Route path="/app" element={<AppPage />} />
+        <Route path="/pricing" element={<Pricing />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>
