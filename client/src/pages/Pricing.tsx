@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
+import Wordmark from '../components/Wordmark';
 import GoogleButton from '../components/GoogleButton';
+import UnverifiedAppNotice from '../components/UnverifiedAppNotice';
 import { ApiError, api, loginUrl, type CatalogResponse, type PricedSku } from '../lib/api';
 import { formatDuration } from '../lib/format';
 import { useJobStore } from '../store/useJobStore';
@@ -80,7 +82,7 @@ export default function Pricing() {
     <div className="min-h-full bg-ink-950">
       <header className="mx-auto flex max-w-5xl items-center justify-between px-6 py-6">
         <Link to="/" className="font-mono text-sm tracking-tight text-ink-200">
-          turtle<span className="text-accent-500">type</span>
+          <Wordmark />
         </Link>
         {user ? (
           <div className="flex items-center gap-4 text-sm">
@@ -433,6 +435,7 @@ export default function Pricing() {
             <div className="mt-4">
               <GoogleButton next="/pricing" />
             </div>
+            <UnverifiedAppNotice className="mt-4" />
           </section>
         ) : null}
       </main>

@@ -88,9 +88,9 @@ login only helps if you hit anonymous pull rate limits.)
    STRIPE_WEBHOOK_SECRET=<whsec_… from the webhook endpoint you create>
    STRIPE_PRICE_PACK_STARTER=<price_… from Stripe's product catalog>
 
-   # Quoted by /privacy and /terms; set before submitting to Google
-   LEGAL_OPERATOR=<who operates the service>
-   SUPPORT_EMAIL=<public support address>
+   # Quoted by /privacy and /terms; set before submitting to Google.
+   # SUPPORT_EMAIL is optional — it already defaults to help@turtlegames.org.
+   LEGAL_OPERATOR=<legal entity or individual operating the service>
    LEGAL_JURISDICTION=<governing law, e.g. England and Wales>
    ```
 
@@ -246,6 +246,23 @@ The OAuth client must know about the new domain or every sign-in fails with
    Exactly that — scheme, host and path must match `GOOGLE_CALLBACK_URL`
    character for character. Keep the localhost entry for development.
 2. **OAuth consent screen → Authorised domains →** add `turtlegames.org`.
+3. **OAuth consent screen → Scopes →** make sure all four the app requests are
+   listed, and nothing else:
+
+   ```
+   openid
+   https://www.googleapis.com/auth/userinfo.email
+   https://www.googleapis.com/auth/userinfo.profile
+   https://www.googleapis.com/auth/documents      <- the sensitive one
+   ```
+
+   Only the last needs justifying, and it is what verification reviews. Do not
+   add a Drive scope: those are *restricted* rather than sensitive and drag a
+   third-party CASA security assessment into the review. Nothing here needs
+   one — `documents` covers creating, reading and writing.
+4. **APIs & Services → Library →** confirm the **Google Docs API** is enabled.
+   This is separate from declaring the scope, and missing it fails every job
+   with `403 SERVICE_DISABLED` without ever mentioning the API.
 
 ### The 7-day refresh token trap
 
@@ -261,11 +278,21 @@ The app handles that expiry gracefully — it clears the dead token and sends th
 user back through consent rather than failing silently — but it is not something
 you want in production.
 
-To fix it, set the consent screen's publishing status to **In production**.
-Google requires verification for sensitive scopes, which means providing a
-privacy policy URL, a terms URL, a homepage on `turtlegames.org`, and a demo
-video showing why the app needs Docs access. Verification typically takes a few
-days to a few weeks, so start it early if you plan to open this beyond yourself.
+To fix it, set the consent screen's publishing status to **In production**. You
+can do that today, before verification finishes — the two are separate settings,
+and production removes the 7-day expiry on its own.
+
+What production does **not** remove is the "Google hasn't verified this app"
+warning, or the user cap. An unverified app in production still shows the
+warning and is limited to 100 new users over the lifetime of the project.
+Only verification lifts those, and it means providing a privacy policy URL, a
+terms URL, a homepage on `turtlegames.org`, and a demo video showing why the app
+needs Docs access. It takes weeks.
+
+So the order that costs you least is: publish to production now, submit for
+verification immediately, and treat the 100 users as a runway rather than a
+limit you will not reach. [`docs/google-oauth-verification.md`](docs/google-oauth-verification.md)
+has the full comparison and the submission checklist.
 
 If TurtleType is only ever for you and a handful of people, staying in Testing is
 fine — just expect the weekly re-consent.

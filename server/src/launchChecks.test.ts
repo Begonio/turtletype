@@ -100,22 +100,24 @@ describe('launchReport', () => {
 });
 
 describe('legalReport', () => {
-  it('is satisfied by the three identity variables', () => {
+  it('is satisfied by the two variables that have no honest default', () => {
     assert.deepEqual(
       legalReport({
         LEGAL_OPERATOR: 'A Person',
         LEGAL_JURISDICTION: 'England and Wales',
-        SUPPORT_EMAIL: 'support@example.com',
       }),
       [],
     );
   });
 
   it('names each missing piece the legal pages and consent screen quote', () => {
-    assert.deepEqual(subjects(legalReport({})), [
-      'LEGAL_OPERATOR',
-      'LEGAL_JURISDICTION',
-      'SUPPORT_EMAIL',
-    ]);
+    assert.deepEqual(subjects(legalReport({})), ['LEGAL_OPERATOR', 'LEGAL_JURISDICTION']);
+  });
+
+  it('does not require SUPPORT_EMAIL, which ships with a real default', () => {
+    // config.legal.contactEmail falls back to help@turtlegames.org — a real
+    // address on the operator's domain, not a placeholder. Demanding the
+    // variable be set anyway would block a launch over nothing.
+    assert.ok(!subjects(legalReport({})).includes('SUPPORT_EMAIL'));
   });
 });

@@ -1,10 +1,31 @@
 # Getting past the 100-user cap
 
-The cap is not a quota you can raise. It is what an OAuth app in **Testing**
-publishing status gets: at most 100 named test users, each of whom you add by
-hand, and their grants expire after 7 days. Moving to **In production** removes
-it. What it takes to move there depends entirely on which scopes you ask for,
-and that is the decision this document is really about.
+**Correction (August 2026):** an earlier version of this document said moving
+to **In production** removes the cap. It does not. Publishing status and
+verification are two different things, and only the second one lifts the cap.
+
+There are three states, not two:
+
+| | Test users | Grant lifetime | "Unverified app" warning | Cap |
+|---|---|---|---|---|
+| **Testing** | Only accounts you add by hand, max 100 | **7 days**, then re-consent | Yes | 100 hand-added testers |
+| **In production**, unverified | Anyone | Normal | **Yes, still** | **100 new users, for the lifetime of the project** |
+| **In production**, verified | Anyone | Normal | No | None |
+
+Publishing to production without verification buys two real things — anyone can
+sign in, and grants stop dying every 7 days — and costs one: you start spending
+a 100-user allowance that, per Google's documentation, applies over the entire
+lifetime of the project and cannot be reset. Verification is what removes both
+the warning and the cap.
+
+What verification takes depends entirely on which scopes you ask for, and that
+is the decision this document is really about.
+
+> Google's own pages are unreachable from the environment these notes were
+> written in, so the table above is assembled from Google's documentation as
+> quoted in search results rather than read first-hand. Confirm the cap wording
+> in the Cloud Console before you rely on the "lifetime, non-resettable" detail
+> — it is the one that would hurt to be wrong about.
 
 > **Decision (August 2026): stay on `documents` and verify.** The alternative
 > is written out below because it is genuinely the cheaper path and worth
@@ -12,6 +33,27 @@ and that is the decision this document is really about.
 > from "If you stay on `documents`" onward is the live checklist. Read the fork
 > if you want to know what was traded away; skip to
 > [what to actually do](#if-you-stay-on-documents) if you just want to submit.
+
+## What to do while you wait
+
+Verification takes weeks. Two things are worth doing on day one rather than at
+the end of it:
+
+1. **Publish to production now, before the review finishes.** The 7-day grant
+   expiry in Testing is not a nuisance for this product, it is a defect: jobs
+   run for hours and users come back, so a token that dies weekly means
+   re-consent as a routine part of using a thing they paid for. Production
+   removes it while leaving the warning in place. Do this even though the
+   warning stays.
+2. **Watch the 100-user counter like a runway.** In production and unverified,
+   it is 100 sign-ups and then nothing until review lands — and the count does
+   not reset. For a paid product that is the whole customer base until Google
+   answers. Submit verification the same week you start charging, not after.
+
+The sign-in page and the pricing page both explain the warning screen while
+`OAUTH_APP_VERIFIED` is false — what it means, and the Advanced → Go to
+TurtleType (unsafe) path through it. Set `OAUTH_APP_VERIFIED=true` the day
+verification lands and the explanation disappears on its own.
 
 ## The fork in the road
 
@@ -94,13 +136,17 @@ bounces.
       under *APIs & Services → OAuth consent screen → Authorised domains*.
       Every URL you give the reviewer must sit on a verified domain.
 - [ ] **Set the operator identity variables.** No longer a code change: the
-      pages read `LEGAL_OPERATOR`, `SUPPORT_EMAIL`, `LEGAL_JURISDICTION` and
+      pages read `LEGAL_OPERATOR`, `LEGAL_JURISDICTION`, `SUPPORT_EMAIL` and
       `LEGAL_LAST_UPDATED` from `GET /api/legal` at runtime, so a correction a
       reviewer asks for is a variable change and a restart rather than a
-      redeploy — which matters when each round trip restarts their clock. Run
-      `npm run launch:check -w server` against the production environment; it
-      fails while any of them is unset. Then load `/privacy` and `/terms` and
+      redeploy — which matters when each round trip restarts their clock. The
+      first two are required and have no default; the support address already
+      defaults to `help@turtlegames.org`. Run `npm run launch:check -w server`
+      against the production environment, then load `/privacy` and `/terms` and
       confirm no amber "not configured" notice is showing.
+- [ ] **Confirm `help@turtlegames.org` is monitored.** It is the user-support
+      email on the consent screen, so Google's review correspondence goes
+      there. An unread mailbox stalls the review indefinitely.
 - [ ] **Have a lawyer look at the policy.** What is in the repo is accurate to
       what the code does — that is the part I could get right — but accuracy is
       not the same as sufficiency in your jurisdiction, and it is not legal
@@ -113,7 +159,9 @@ bounces.
       below.
 - [ ] **Record the demo video** to the shot list in
       [Demo video script](#demo-video-script) below. Unlisted YouTube is fine.
-- [ ] **Switch publishing status to In production** and submit.
+- [ ] **Switch publishing status to In production** and submit. (If you took
+      the advice above you did this weeks ago — submitting is the part that
+      remains.)
 
 ### After you submit
 
@@ -123,8 +171,95 @@ run into weeks. Replies from the review team go to the developer contact email
 common follow-up is a request to re-record the video showing something they
 could not see the first time.
 
+When it is granted, set `OAUTH_APP_VERIFIED=true` on the deploy. That is what
+removes the "Google will show a warning first" notice from the sign-in and
+pricing pages; nothing else reads the flag, so leaving it false only means
+users are warned about a screen they will no longer see.
+
 Note that verification is not permanent: sensitive-scope apps are re-reviewed
-annually, and letting that lapse drops you back behind the cap.
+annually, and letting that lapse drops you back behind the cap — and back to
+`OAUTH_APP_VERIFIED=false` until it is restored.
+
+### What to enter in the Scopes step
+
+The app requests exactly four scopes (`server/src/config.ts`), and the consent
+screen should list exactly these — no more:
+
+| Scope | Sensitivity | Why |
+|---|---|---|
+| `openid` | Non-sensitive | Sign-in |
+| `https://www.googleapis.com/auth/userinfo.email` | Non-sensitive | Account identity, billing receipts |
+| `https://www.googleapis.com/auth/userinfo.profile` | Non-sensitive | Name and avatar in the UI |
+| `https://www.googleapis.com/auth/documents` | **Sensitive** | The whole product |
+
+Passport sends the middle two as the `email` and `profile` shorthands, which is
+why the console shows them under their full `userinfo.*` names. Only the last
+row triggers verification, and it is the only one with a justification field.
+
+**Add nothing else.** The temptation is to add a Drive scope "in case", and it
+is an expensive mistake: `drive`, `drive.readonly` and friends are
+**restricted**, not merely sensitive, and restricted scopes require a
+third-party CASA security assessment on top of the review — a different order
+of cost and delay. Nothing in this codebase needs one. All three Docs calls it
+makes are covered by `documents` alone:
+
+- `documents.create` — the new-document path (`docs/documents.ts`)
+- `documents.get` — reading the document's length so text appends at the right
+  index
+- `documents.batchUpdate` — every write
+
+Creating a document does **not** require a Drive scope, which is the usual
+reason people reach for one.
+
+### Enabling the API is a separate step
+
+Declaring a scope and enabling the API are different settings, and having one
+without the other fails in a way that does not mention the other. If the
+**Google Docs API** is not enabled under *APIs & Services → Library*, every job
+fails with `403 SERVICE_DISABLED` no matter how the consent screen is
+configured. Check it before blaming scopes.
+
+### Homepage requirements
+
+Review rejected the homepage twice, so these are not optional and they are
+checked by a person, not a crawler. What Google asks for, and where it now
+lives:
+
+| Requirement | Where it is met |
+|---|---|
+| Accurately identifies the app and brand | `<h1>TurtleType</h1>`, and the operator named in the footer |
+| Fully describes functionality | "What TurtleType does" section |
+| Explains why user data is requested | "Why TurtleType asks for access to your Google account" section |
+| Hosted on a verified domain you own | `type.turtlegames.org` — verify `turtlegames.org` in Search Console |
+| Not on a third-party platform | Own domain, own deploy |
+| Links to the privacy policy | Header nav and footer, `/privacy` |
+| Visible without logging in | The homepage no longer redirects signed-in visitors |
+
+Three of these have bitten this project already:
+
+**The app name must match the consent screen exactly.** The wordmark used to
+render as lowercase `turtletype` while the consent screen said `TurtleType`,
+and review rejected it as a mismatch. The name now comes from
+`client/src/components/Wordmark.tsx`, which exists so there is one place to get
+this right. Do not restyle it to lowercase, and do not replace it with an image
+— a name that only appears inside a logo cannot be read as matching.
+
+**The homepage must stay visible after sign-in.** It used to redirect anyone
+with a session to `/app`, which meant the reviewer — who signs in to test the
+app and then returns to the homepage URL — could not see it at all. "Visible
+without requiring login" is not satisfied by a page that disappears once you
+have logged in. There is a comment in `Landing.tsx` saying so; do not
+reintroduce the redirect.
+
+**The data explanation has to be findable.** It was one line of grey small
+print under the sign-in button, which is not "explain with transparency". It is
+now a section with a heading, listing each permission and what is never done
+with it, saying the same things as `/privacy`.
+
+The homepage URL you enter on the consent screen must be the page that actually
+satisfies all of this — `https://type.turtlegames.org`, not a deep link — and
+the privacy policy URL there must match the one the homepage links to, exactly,
+including the scheme and any trailing slash.
 
 ### Scope justification
 

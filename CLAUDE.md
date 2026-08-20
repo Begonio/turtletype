@@ -67,6 +67,8 @@ Monorepo, npm workspaces, `server/` + `client/`, TypeScript throughout, ESM.
 - **`config.ts` keeps secrets behind getters** so pure modules can be imported in tests without a live database.
 - **Billing fails open in development and closed in production.** `config.billing.enabled` is false with no Stripe keys and the paywall waves jobs through — correct on a laptop, a silent giveaway on the deploy that is meant to charge. `preflight.ts` runs `launchChecks.ts` and exits non-zero in production unless the deploy can bill, and `hasCredits` answers 503 rather than `next()` if it ever finds itself there anyway. Don't "simplify" either back into a plain `next()`.
 - **`launchChecks.ts` is pure** — it reads an env object passed to it, never `process.env` directly, so the launch rules are testable without an environment. Same discipline as `humanize.ts`.
+- **The displayed app name must read exactly `TurtleType`.** It has to match the OAuth consent screen — Google's homepage review rejected a lowercase `turtletype` wordmark as a mismatch. `components/Wordmark.tsx` is the single source; don't restyle it to lowercase or swap it for an image.
+- **The homepage must not redirect signed-in visitors.** It used to bounce them to `/app`, which hid it from the one person who has to read it: a verification reviewer, who signs in to test and then goes back to the homepage. Review also requires the homepage to describe the app's functionality and explain each Google permission in visible copy, not small print — see `docs/google-oauth-verification.md`.
 - **Operator identity lives in env, not in the client bundle.** `/privacy` and `/terms` read `LEGAL_OPERATOR`, `SUPPORT_EMAIL`, `LEGAL_JURISDICTION` from `GET /api/legal` at runtime. Google's OAuth review commonly asks for a correction here, and every round trip restarts their clock — a variable change beats a redeploy. An unset jurisdiction renders a visible notice rather than an invented one; don't replace it with a plausible default.
 - **`preflight.ts` must stay the first import in `index.ts`.** It validates env before `db/pool.ts` reads it at module load. Reordering imports can silently break env validation.
 - **Regenerate `package-lock.json` whenever `package.json` changes.** A rename passed locally and failed on Railway's `npm ci`, because local dev reuses `node_modules` and never revalidates the lockfile.
@@ -85,6 +87,18 @@ scope and the OAuth app is in Testing status. **Decision (August 2026): stay on
 non-sensitive `drive.file` scope — the existing-doc path is a pasted URL, which
 `drive.file` cannot reach without a Google Picker nobody has built. That
 remains the documented fallback if review drags.
+
+Publishing status and verification are **separate settings**. In production but
+unverified, users still meet the "Google hasn't verified this app" interstitial
+and the app is capped at 100 new users for the lifetime of the project — but
+grants stop expiring every 7 days, which in Testing they do. So publish to
+production early and submit verification early; only verification lifts the
+warning and the cap.
+
+`OAUTH_APP_VERIFIED` drives the sign-in warning notice (`UnverifiedAppNotice`)
+and nothing else. It is a flag rather than hardcoded copy for the same reason
+the landing page stopped hardcoding "free while in beta" — a notice about a
+temporary state outlives the state unless something removes it.
 
 `docs/google-oauth-verification.md` holds the submission checklist, the scope
 justification text, and the demo-video shot list.

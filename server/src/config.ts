@@ -126,6 +126,21 @@ export const config = {
       'https://www.googleapis.com/auth/documents',
     ],
     /**
+     * Whether Google has finished verifying the OAuth app.
+     *
+     * While this is false, anyone signing in meets Google's "Google hasn't
+     * verified this app" interstitial before the consent screen and has to
+     * click through Advanced → Go to TurtleType (unsafe). The sign-in page
+     * warns them so the wording does not read as a malware warning — which,
+     * on a page that then asks for money, is what it looks like.
+     *
+     * A flag rather than hardcoded copy for the same reason the landing page
+     * stopped hardcoding "free while in beta": a notice about a temporary
+     * state outlives the state unless something makes it go away. Flip this
+     * to true the day verification lands and the notice disappears.
+     */
+    appVerified: bool('OAUTH_APP_VERIFIED', false),
+    /**
      * Override for the Docs API base URL. Unset in production; the integration
      * tests point it at a local fake so the whole write path can run without
      * touching Google.
@@ -231,8 +246,14 @@ export const config = {
     get operator(): string {
       return process.env.LEGAL_OPERATOR?.trim() || 'TurtleType';
     },
+    /**
+     * Public support address, on the operator's own domain. Overridable, but
+     * the default is the real one rather than a placeholder — this address
+     * goes on the consent screen and both policy pages, and an unset variable
+     * should not put a personal inbox in front of reviewers and customers.
+     */
     get contactEmail(): string {
-      return process.env.SUPPORT_EMAIL?.trim() || 'wrussola45@gmail.com';
+      return process.env.SUPPORT_EMAIL?.trim() || 'help@turtlegames.org';
     },
     /** Empty until configured; the terms render a placeholder note instead of a fake. */
     get jurisdiction(): string {

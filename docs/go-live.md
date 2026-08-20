@@ -17,29 +17,34 @@ for the two clocks to run in series.
 Four environment variables, set on the deployed service (Railway → the service
 → Variables), not in a file in the repo:
 
-| Variable | Example | Where it shows |
-|---|---|---|
-| `LEGAL_OPERATOR` | `Jane Smith` | /privacy, /terms |
-| `SUPPORT_EMAIL` | `support@turtlegames.org` | /privacy, /terms, OAuth consent screen |
-| `LEGAL_JURISDICTION` | `England and Wales` | /terms, governing law |
-| `LEGAL_LAST_UPDATED` | `20 August 2026` | both, as the date |
+| Variable | Example | Where it shows | Required |
+|---|---|---|---|
+| `LEGAL_OPERATOR` | `Jane Smith` | /privacy, /terms | **Yes** |
+| `LEGAL_JURISDICTION` | `England and Wales` | /terms, governing law | **Yes** |
+| `SUPPORT_EMAIL` | `help@turtlegames.org` | /privacy, /terms, OAuth consent screen | No — defaults to `help@turtlegames.org` |
+| `LEGAL_LAST_UPDATED` | `20 August 2026` | both, as the date | No |
 
 These are served by `GET /api/legal` and rendered at runtime, so correcting one
 is a variable change and a restart — not a rebuild. That matters more than it
 sounds: "please correct the operator name" is a common verification round trip,
 and every round trip restarts the reviewer's clock.
 
-Two things worth deciding rather than defaulting:
+The two required ones are required because no honest default exists for them:
 
-- **`SUPPORT_EMAIL` is public.** It goes on the policy pages and on the consent
-  screen, where reviewers and customers both read it. Unset, it falls back to
-  the personal Gmail on the account. A role address on `turtlegames.org`
-  forwarding to that inbox costs nothing and ages better.
-- **`LEGAL_JURISDICTION` has no sensible default**, so there isn't one. Left
-  unset, `/terms` shows a visible "governing law has not been configured"
-  notice instead of naming a jurisdiction. That is deliberate: an invented
-  governing law is a worse thing to publish than an obvious gap, and this is
-  the clause that decides where a dispute is heard.
+- **`LEGAL_OPERATOR` falls back to the product name**, which is not an
+  operator. A customer disputing a charge needs to know who they contracted
+  with, and Google checks this against the Cloud project owner.
+- **`LEGAL_JURISDICTION` has no default at all.** Left unset, `/terms` shows a
+  visible "governing law has not been configured" notice instead of naming a
+  jurisdiction. That is deliberate: an invented governing law is a worse thing
+  to publish than an obvious gap, and this is the clause that decides where a
+  dispute is heard.
+
+`SUPPORT_EMAIL` is not on that list because it ships with the real address —
+`help@turtlegames.org` — rather than a placeholder. Make sure that mailbox is
+actually monitored before submitting: it is where Google's review
+correspondence, deletion requests and refund requests all land, and a review
+round trip stalls while nobody reads it.
 
 > The policy text itself is written to match what the code actually does — the
 > document text never reaches Postgres, tokens are stored for the runtime of a
@@ -100,8 +105,19 @@ trial cost more than it converts.
 ## 3. Get out of Testing on Google
 
 Full detail in [`google-oauth-verification.md`](google-oauth-verification.md),
-including the exact scope justification and demo-video script. The short
-version, in submission order:
+including the exact scope justification and demo-video script.
+
+**Do this first, before the checklist below:** switch the consent screen to
+**In production**. It is a separate setting from verification and you do not
+have to wait for review to use it. In Testing, grants expire after 7 days —
+which for a product whose jobs run for hours and whose users come back is not
+an inconvenience but a defect. Production removes that. It does *not* remove
+the "Google hasn't verified this app" warning or the user cap: unverified in
+production still shows the warning and allows 100 new users over the lifetime
+of the project, non-resettable. Treat those 100 as your runway and submit
+verification the same week you start charging.
+
+Then, in submission order:
 
 - [ ] **Verify `turtlegames.org` in Search Console** using the Google account
       that owns the Cloud project, then add it under *APIs & Services → OAuth
@@ -119,6 +135,10 @@ version, in submission order:
 - [ ] **Watch the developer contact inbox.** Replies go there and the clock
       restarts on each round trip; the usual follow-up is a re-record of the
       video showing something they could not see.
+- [ ] **When it is granted, set `OAUTH_APP_VERIFIED=true`.** That removes the
+      "Google will show a warning first" notice from the sign-in and pricing
+      pages. Nothing else reads the flag, so a forgotten one only means warning
+      people about a screen they will not see.
 
 Expect a first response in several business days and the whole thing to take
 weeks. Sensitive-scope apps are re-reviewed annually — letting that lapse drops

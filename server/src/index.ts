@@ -21,7 +21,7 @@ import { jobQueue } from './jobs/queue.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { billingRouter, stripeWebhookRouter } from './routes/billing.js';
 import { jobsRouter } from './routes/jobs.js';
-import { legalRouter } from './routes/legal.js';
+import { publicConfigRouter } from './routes/publicConfig.js';
 import { meRouter } from './routes/me.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -96,7 +96,7 @@ export function createApp(): express.Express {
   });
 
   app.use('/auth', authRouter);
-  app.use('/api', legalRouter);
+  app.use('/api', publicConfigRouter);
   app.use('/api', meRouter);
   app.use('/api', billingRouter);
   app.use('/api', jobsRouter);
