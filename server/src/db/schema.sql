@@ -32,8 +32,19 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS current_period_end TIMESTAMPTZ;
 -- A negative balance would mean a job ran that nobody paid for. Postgres
 -- enforces it so no amount of concurrent webhook and job traffic can produce
 -- one; the reserve path relies on this as its last line of defence.
-ALTER TABLE users DROP CONSTRAINT IF EXISTS users_credits_non_negative;
-ALTER TABLE users ADD CONSTRAINT users_credits_non_negative CHECK (credits >= 0);
+--
+-- Added conditionally rather than dropped-and-recreated. The drop/add version
+-- was not a no-op on re-run: it took an ACCESS EXCLUSIVE lock on users and
+-- re-validated every row on every single boot, and a migration doing that
+-- while another connection held a row lock on users deadlocked outright.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'users_credits_non_negative'
+  ) THEN
+    ALTER TABLE users ADD CONSTRAINT users_credits_non_negative CHECK (credits >= 0);
+  END IF;
+END $$;
 
 CREATE UNIQUE INDEX IF NOT EXISTS users_stripe_customer_idx
   ON users (stripe_customer_id) WHERE stripe_customer_id IS NOT NULL;

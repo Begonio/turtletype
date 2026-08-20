@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { config } from '../config.js';
 import { findSku, priceIdFor, publicCatalog } from '../billing/catalog.js';
 import { balanceOf, listLedger } from '../billing/credits.js';
+import { charsPerWord, referencePoints } from '../billing/whatYouGet.js';
 import { stripe } from '../billing/stripe.js';
 import { handleEvent, parseEvent } from '../billing/webhook.js';
 import { query } from '../db/pool.js';
@@ -33,8 +34,14 @@ billingRouter.get(
       enabled: config.billing.enabled,
       charsPerCredit: config.billing.charsPerCredit,
       maxCreditsPerJob: config.billing.maxCreditsPerJob,
+      signupGrantCredits: config.billing.signupGrantCredits,
       skus: publicCatalog(),
       credits: userId ? await balanceOf(userId) : null,
+      // Measured by running the real planner, not written into the copy. A
+      // customer deciding whether to pay should see how long a job of their
+      // size actually takes, and that number moves whenever pacing is tuned.
+      reference: referencePoints(),
+      charsPerWord: charsPerWord(),
     });
   }),
 );

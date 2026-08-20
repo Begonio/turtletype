@@ -25,6 +25,11 @@ import { stripe } from './stripe.js';
 /** Events this app acts on. Anything else is acknowledged and ignored. */
 export const HANDLED_EVENTS = [
   'checkout.session.completed',
+  // Some payment methods settle after Checkout returns. Without this event a
+  // customer who paid by one of them would be charged and never credited,
+  // because `checkout.session.completed` arrives while payment_status is still
+  // 'unpaid' and correctly declines to pay out.
+  'checkout.session.async_payment_succeeded',
   'invoice.paid',
   'customer.subscription.updated',
   'customer.subscription.deleted',
@@ -241,6 +246,10 @@ export async function handleEvent(event: Stripe.Event): Promise<string> {
   let outcome: string;
   switch (event.type) {
     case 'checkout.session.completed':
+    case 'checkout.session.async_payment_succeeded':
+      // Both carry the same session object, and both route through the same
+      // handler: it pays out only when payment_status is 'paid', and the
+      // session id keeps the two from crediting twice for one purchase.
       outcome = await onCheckoutCompleted(event.data.object);
       break;
     case 'invoice.paid':

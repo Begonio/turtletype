@@ -98,9 +98,9 @@ export default function AppPage() {
           <div className="flex items-center gap-4">
             {billingEnabled ? (
               <Link
-                to="/pricing"
+                to="/billing"
                 className="rounded-full border border-ink-700 px-3 py-1 font-mono text-[11px] text-ink-300 transition hover:border-accent-600/60 hover:text-accent-400"
-                title="Buy credits"
+                title="Balance, history and billing"
               >
                 {user.credits} {user.credits === 1 ? 'credit' : 'credits'}
               </Link>
