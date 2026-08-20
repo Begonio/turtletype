@@ -180,6 +180,45 @@ Note that verification is not permanent: sensitive-scope apps are re-reviewed
 annually, and letting that lapse drops you back behind the cap — and back to
 `OAUTH_APP_VERIFIED=false` until it is restored.
 
+### What to enter in the Scopes step
+
+The app requests exactly four scopes (`server/src/config.ts`), and the consent
+screen should list exactly these — no more:
+
+| Scope | Sensitivity | Why |
+|---|---|---|
+| `openid` | Non-sensitive | Sign-in |
+| `https://www.googleapis.com/auth/userinfo.email` | Non-sensitive | Account identity, billing receipts |
+| `https://www.googleapis.com/auth/userinfo.profile` | Non-sensitive | Name and avatar in the UI |
+| `https://www.googleapis.com/auth/documents` | **Sensitive** | The whole product |
+
+Passport sends the middle two as the `email` and `profile` shorthands, which is
+why the console shows them under their full `userinfo.*` names. Only the last
+row triggers verification, and it is the only one with a justification field.
+
+**Add nothing else.** The temptation is to add a Drive scope "in case", and it
+is an expensive mistake: `drive`, `drive.readonly` and friends are
+**restricted**, not merely sensitive, and restricted scopes require a
+third-party CASA security assessment on top of the review — a different order
+of cost and delay. Nothing in this codebase needs one. All three Docs calls it
+makes are covered by `documents` alone:
+
+- `documents.create` — the new-document path (`docs/documents.ts`)
+- `documents.get` — reading the document's length so text appends at the right
+  index
+- `documents.batchUpdate` — every write
+
+Creating a document does **not** require a Drive scope, which is the usual
+reason people reach for one.
+
+### Enabling the API is a separate step
+
+Declaring a scope and enabling the API are different settings, and having one
+without the other fails in a way that does not mention the other. If the
+**Google Docs API** is not enabled under *APIs & Services → Library*, every job
+fails with `403 SERVICE_DISABLED` no matter how the consent screen is
+configured. Check it before blaming scopes.
+
 ### Scope justification
 
 The field the review turns on. Paste this, adjusting only the operator name:

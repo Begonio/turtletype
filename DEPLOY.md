@@ -246,6 +246,23 @@ The OAuth client must know about the new domain or every sign-in fails with
    Exactly that — scheme, host and path must match `GOOGLE_CALLBACK_URL`
    character for character. Keep the localhost entry for development.
 2. **OAuth consent screen → Authorised domains →** add `turtlegames.org`.
+3. **OAuth consent screen → Scopes →** make sure all four the app requests are
+   listed, and nothing else:
+
+   ```
+   openid
+   https://www.googleapis.com/auth/userinfo.email
+   https://www.googleapis.com/auth/userinfo.profile
+   https://www.googleapis.com/auth/documents      <- the sensitive one
+   ```
+
+   Only the last needs justifying, and it is what verification reviews. Do not
+   add a Drive scope: those are *restricted* rather than sensitive and drag a
+   third-party CASA security assessment into the review. Nothing here needs
+   one — `documents` covers creating, reading and writing.
+4. **APIs & Services → Library →** confirm the **Google Docs API** is enabled.
+   This is separate from declaring the scope, and missing it fails every job
+   with `403 SERVICE_DISABLED` without ever mentioning the API.
 
 ### The 7-day refresh token trap
 
