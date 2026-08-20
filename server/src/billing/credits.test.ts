@@ -1,18 +1,104 @@
 import assert from 'node:assert/strict';
 import { after, before, beforeEach, describe, it } from 'node:test';
-import { creditsForChars, findSku, publicCatalog, SKUS } from './catalog.js';
+import { config } from '../config.js';
+import { charsForCredits, creditsForChars, findSku, publicCatalog, SKUS } from './catalog.js';
+import { MIN_CHARGE_CREDITS, subtractCredits, toHundredths } from './amount.js';
+import { referencePoints, resetReferencePoints } from './whatYouGet.js';
 
 /**
  * The catalog is pure, so it is tested unconditionally. Everything below it
  * needs Postgres and skips without one, mirroring `integration.test.ts`.
  */
 describe('catalog', () => {
-  it('prices a job by characters, rounding up, never free', () => {
+  it('prices a job by characters, to a hundredth of a credit, never free', () => {
     assert.equal(creditsForChars(0, 10_000), 0);
-    assert.equal(creditsForChars(1, 10_000), 1);
     assert.equal(creditsForChars(10_000, 10_000), 1);
-    assert.equal(creditsForChars(10_001, 10_000), 2);
-    assert.equal(creditsForChars(45_000, 10_000), 5);
+    assert.equal(creditsForChars(45_000, 10_000), 4.5);
+    assert.equal(creditsForChars(5_000, 10_000), 0.5);
+    assert.equal(creditsForChars(120, 10_000), 0.02);
+
+    // Rounded up to the next hundredth, never down.
+    assert.equal(creditsForChars(10_001, 10_000), 1.01);
+    assert.equal(creditsForChars(101, 10_000), 0.02);
+
+    // Never free once the grant is spent: a one-character document still holds
+    // a queue slot and still writes a revision history.
+    assert.equal(creditsForChars(1, 10_000), MIN_CHARGE_CREDITS);
+    assert.equal(creditsForChars(1, 10_000), 0.01);
+  });
+
+  it('charges a short document a fraction rather than a whole credit', () => {
+    // The change this granularity exists for. A 400-character note used to
+    // cost the same as a 7,700-character essay, which is roughly nineteen
+    // times the work for the same money.
+    const note = creditsForChars(400, 7_700);
+    const essay = creditsForChars(7_700, 7_700);
+    assert.equal(note, 0.06);
+    assert.equal(essay, 1);
+    assert.ok(note < essay / 15, `a note at ${note} is not meaningfully cheaper than ${essay}`);
+  });
+
+  it('prices strictly in proportion to length', () => {
+    // No length is cheaper than a shorter one, and doubling the text never
+    // more than doubles the price. Both would be visible to a customer
+    // comparing two jobs, and neither is caught by spot-checking values.
+    let previous = 0;
+    for (let chars = 0; chars <= 60_000; chars += 137) {
+      const price = creditsForChars(chars, 7_700);
+      assert.ok(price >= previous, `${chars} chars costs less than ${chars - 137}`);
+      previous = price;
+    }
+    const single = creditsForChars(9_000, 7_700);
+    const double = creditsForChars(18_000, 7_700);
+    assert.ok(double <= single * 2, `${double} is more than twice ${single}`);
+  });
+
+  it('rounds the reverse conversion down, so a quoted allowance is affordable', () => {
+    assert.equal(charsForCredits(1, 7_700), 7_700);
+    assert.equal(charsForCredits(0.5, 7_700), 3_850);
+    assert.equal(charsForCredits(0, 7_700), 0);
+    // What the balance page quotes must be a length the balance can actually
+    // pay for, so the two functions have to agree at the boundary.
+    for (const balance of [0.01, 0.07, 0.5, 1, 2.5, 13.37]) {
+      const affordable = charsForCredits(balance, 7_700);
+      assert.ok(
+        creditsForChars(affordable, 7_700) <= balance,
+        `${balance} credits quoted ${affordable} chars, which costs more than ${balance}`,
+      );
+    }
+  });
+
+  /**
+   * The credit unit is defined as five hours of typing; `charsPerCredit` is
+   * derived from it and the planner's pace. Nothing at runtime re-derives it,
+   * so a pacing change would silently move what a credit is worth — the same
+   * failure `whatYouGet.ts` exists to prevent on the pricing page.
+   *
+   * Measured through `referencePoints()` rather than by planning a sample of
+   * this test's own: that is the function the pricing page publishes from, so
+   * the figure pinned here is the figure a customer is shown. A sample written
+   * here instead would drift from it — the planner breaks bursts at sentence
+   * ends, so even reusing the same prose with a couple of sentences trimmed
+   * moves the answer by three quarters of an hour.
+   */
+  it('keeps one credit worth about five hours of typing', () => {
+    resetReferencePoints();
+    const oneCredit = referencePoints().find(
+      (row) => row.chars === config.billing.charsPerCredit,
+    );
+    assert.ok(
+      oneCredit,
+      'no reference row costing exactly one credit — the pricing page callout has nothing to quote',
+    );
+    assert.equal(oneCredit.credits, 1);
+
+    const hours = oneCredit.durationMs / 3_600_000;
+    assert.ok(
+      hours > 4.5 && hours < 5.5,
+      `one credit (${config.billing.charsPerCredit.toLocaleString()} chars) now plans ` +
+        `${hours.toFixed(2)} hours, not about five. Either pacing changed and ` +
+        'CHARS_PER_CREDIT needs re-deriving, or the pacing change was unintended.',
+    );
   });
 
   it('has unique, stable SKU ids', () => {
@@ -282,6 +368,77 @@ describe(
       }
       const { balance, ledgerSum, consistent } = await credits.reconcile(userId);
       assert.ok(consistent, `balance ${balance} vs ledger ${ledgerSum}`);
+    });
+
+    it('stores a fractional charge exactly, to the hundredth', async () => {
+      await credits.grantCredits(userId, 1, 'purchase', ref('cs_frac'));
+
+      // 539 characters at 7,700 per credit is 0.07 — the case that divide-then
+      // -scale overcharges. Checked here against Postgres rather than only in
+      // the pure test, because a NUMERIC(12, 2) column would silently round a
+      // third decimal place on the way in and leave the ledger row and the
+      // balance describing different movements.
+      const cost = creditsForChars(539, 7_700);
+      assert.equal(cost, 0.07);
+      await makeJob(539, cost);
+
+      assert.equal(await credits.balanceOf(userId), 0.93);
+      const [entry] = await credits.listLedger(userId);
+      assert.equal(entry?.delta, -0.07);
+      assert.equal(entry?.balance_after, 0.93);
+
+      // And it is a number here, not the string node-postgres returns for a
+      // NUMERIC without the type parser `db/pool.ts` registers.
+      assert.equal(typeof (await credits.balanceOf(userId)), 'number');
+    });
+
+    it('keeps the balance exact over a long run of fractional charges', async () => {
+      // The property fractional pricing puts at risk. A hundred charges of
+      // varying odd sizes, added as floats, drift away from the sum of the
+      // ledger rows; the balance is a cache of that sum, so drift is a
+      // customer being told the wrong number.
+      await credits.grantCredits(userId, 40, 'purchase', ref('cs_drift'));
+      let expected = 40;
+      for (let i = 0; i < 100; i++) {
+        const chars = 137 + i * 53;
+        const cost = creditsForChars(chars, 7_700);
+        await makeJob(chars, cost);
+        expected = subtractCredits(expected, cost);
+      }
+
+      const { balance, ledgerSum, consistent } = await credits.reconcile(userId);
+      assert.ok(consistent, `balance ${balance} vs ledger ${ledgerSum}`);
+      assert.equal(balance, expected);
+      assert.equal(toHundredths(balance), Math.round(toHundredths(balance)));
+    });
+
+    it('refunds a fractional job for exactly what it was charged', async () => {
+      await credits.grantCredits(userId, 1, 'purchase', ref('cs_frac_refund'));
+      const cost = creditsForChars(4_235, 7_700);
+      assert.equal(cost, 0.55);
+
+      const jobId = await makeJob(4_235, cost);
+      assert.equal(await credits.balanceOf(userId), 0.45);
+
+      assert.equal(await credits.settleJobCredits(jobId, 'failed'), 0.55);
+      assert.equal(await credits.balanceOf(userId), 1);
+
+      // Twice through the failure path still pays back once.
+      assert.equal(await credits.settleJobCredits(jobId, 'failed'), 0);
+      assert.equal(await credits.balanceOf(userId), 1);
+    });
+
+    it('refuses a job a fractional balance cannot quite cover', async () => {
+      await credits.grantCredits(userId, 0.05, 'purchase', ref('cs_frac_short'));
+      await assert.rejects(
+        () => makeJob(500, creditsForChars(500, 7_700)),
+        (error: Error) => error instanceof credits.InsufficientCreditsError,
+      );
+      assert.equal(await credits.balanceOf(userId), 0.05);
+
+      // One hundredth less is affordable, and leaves nothing behind.
+      await makeJob(385, 0.05);
+      assert.equal(await credits.balanceOf(userId), 0);
     });
   },
 );

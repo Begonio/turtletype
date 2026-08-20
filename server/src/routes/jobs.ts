@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { config } from '../config.js';
 import { authorizeUser } from '../auth/googleClient.js';
 import { findJob, listJobs } from '../db/jobs.js';
+import { formatCredits, formatCreditsWithUnit, parseCredits } from '../billing/amount.js';
 import { creditsForChars } from '../billing/catalog.js';
 import { createJobReservingCredits, InsufficientCreditsError } from '../billing/credits.js';
 import { toPublicJob } from '../db/types.js';
@@ -103,7 +104,7 @@ jobsRouter.post(
       credits: config.billing.enabled
         ? creditsForChars(text.length, config.billing.charsPerCredit)
         : 0,
-      creditsAvailable: req.currentUser?.credits ?? 0,
+      creditsAvailable: parseCredits(req.currentUser?.credits),
     });
   }),
 );
@@ -157,8 +158,9 @@ jobsRouter.post(
     if (cost > config.billing.maxCreditsPerJob) {
       throw new HttpError(
         400,
-        `That document would cost ${cost} credits, over the ${config.billing.maxCreditsPerJob}-credit ` +
-          'per-job limit. Split it across several jobs.',
+        `That document would cost ${formatCreditsWithUnit(cost)}, over the ` +
+          `${formatCredits(config.billing.maxCreditsPerJob)}-credit per-job limit. ` +
+          'Split it across several jobs.',
         'JOB_TOO_LARGE',
       );
     }

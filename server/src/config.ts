@@ -221,16 +221,38 @@ export const config = {
       return raw === 'true' || raw === '1';
     },
     /**
-     * How many characters one credit buys. Credits are the unit the user
-     * sees, and they track the resource the service is actually short of:
-     * a job holds a concurrency slot for a length of time proportional to its
-     * character count, so charging per character is charging per job-hour.
+     * How many characters one credit buys.
+     *
+     * Credits are the unit the user sees, and they track the resource the
+     * service is actually short of: a job holds a concurrency slot for a
+     * length of time proportional to its character count, so charging per
+     * character is charging per job-hour.
+     *
+     * **One credit is meant to be five hours of typing.** That is the number
+     * to reason about; this one is derived from it. The planner writes about
+     * 1,540 characters an hour at current pacing — measured across seeds and
+     * document sizes, near enough linear from 1,000 characters up — so five
+     * hours is 7,700 characters.
+     *
+     * Do not adjust this by feel when pacing changes. `credits.test.ts` runs
+     * the real planner over a document of exactly this length and fails if it
+     * no longer takes about five hours, which is the same discipline
+     * `whatYouGet.ts` applies to the pricing page: the figure a customer is
+     * charged against has to be one the engine actually produces.
      */
-    charsPerCredit: num('CHARS_PER_CREDIT', 10_000),
+    charsPerCredit: num('CHARS_PER_CREDIT', 7_700),
     /** Credits handed to a new account once, so the revision history can be seen before paying. */
     signupGrantCredits: num('SIGNUP_GRANT_CREDITS', 1),
-    /** Longest a single job may be, in credits. Guards against one job eating a whole pack. */
-    maxCreditsPerJob: num('MAX_CREDITS_PER_JOB', 20),
+    /**
+     * Longest a single job may be, in credits. Guards against one job eating a
+     * whole pack.
+     *
+     * Kept at `maxTextLength / charsPerCredit`, so the credit ceiling and the
+     * character ceiling bite at the same point and a document is refused for
+     * one clearly stated reason rather than two. 26 credits is 200,200
+     * characters against a 200,000 character text limit.
+     */
+    maxCreditsPerJob: num('MAX_CREDITS_PER_JOB', 26),
   },
 
   /**

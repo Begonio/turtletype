@@ -4,6 +4,7 @@ import Wordmark from '../components/Wordmark';
 import GoogleButton from '../components/GoogleButton';
 import UnverifiedAppNotice from '../components/UnverifiedAppNotice';
 import { ApiError, api, loginUrl, type CatalogResponse, type PricedSku } from '../lib/api';
+import { formatCredits, formatCreditsWithUnit } from '../lib/credits';
 import { formatDuration } from '../lib/format';
 import { useJobStore } from '../store/useJobStore';
 
@@ -59,7 +60,7 @@ export default function Pricing() {
 
   const packs = catalog?.skus.filter((sku) => sku.kind === 'pack') ?? [];
   const plans = catalog?.skus.filter((sku) => sku.kind === 'plan') ?? [];
-  const perCredit = catalog?.charsPerCredit ?? 10_000;
+  const perCredit = catalog?.charsPerCredit ?? 7_700;
   const perWord = catalog?.charsPerWord ?? 5.9;
   const wordsPerCredit = Math.round(perCredit / perWord / 50) * 50;
   /**
@@ -87,7 +88,7 @@ export default function Pricing() {
         {user ? (
           <div className="flex items-center gap-4 text-sm">
             <span className="font-mono text-xs text-ink-400">
-              {user.credits} {user.credits === 1 ? 'credit' : 'credits'}
+              {formatCreditsWithUnit(user.credits)}
             </span>
             <Link to="/app" className="text-ink-300 transition hover:text-ink-200">
               Open the app →
@@ -196,7 +197,9 @@ export default function Pricing() {
                           {row.chars.toLocaleString()} chars
                         </td>
                         <td className="px-4 py-3 text-ink-400">~{row.words.toLocaleString()}</td>
-                        <td className="px-4 py-3 font-mono text-accent-400">{row.credits}</td>
+                        <td className="px-4 py-3 font-mono text-accent-400">
+                          {formatCredits(row.credits)}
+                        </td>
                         <td className="px-4 py-3 text-ink-200">
                           {formatDuration(row.durationMs)}
                         </td>
@@ -210,7 +213,15 @@ export default function Pricing() {
               <p className="mt-3 text-xs leading-relaxed text-ink-500">
                 Word counts assume ordinary English prose at about {perWord.toFixed(1)} characters
                 per word. Your document is priced on its exact character count, rounded up to the
-                next whole credit.
+                next hundredth of a credit — so a short note costs a few hundredths rather than a
+                whole one, and you are never charged for length you did not use.
+                {oneCreditExample ? (
+                  <>
+                    {' '}
+                    One credit is {perCredit.toLocaleString()} characters, which takes{' '}
+                    {formatDuration(oneCreditExample.durationMs)} to write.
+                  </>
+                ) : null}
               </p>
             </section>
 
@@ -427,9 +438,9 @@ export default function Pricing() {
             <p className="text-sm text-ink-300">
               New here?{' '}
               {catalog && catalog.signupGrantCredits > 0
-                ? `Signing in gives you ${catalog.signupGrantCredits} free ${
-                    catalog.signupGrantCredits === 1 ? 'credit' : 'credits'
-                  } — ${(catalog.signupGrantCredits * perCredit).toLocaleString()} characters, no card needed.`
+                ? `Signing in gives you ${formatCreditsWithUnit(catalog.signupGrantCredits)} free — ${Math.floor(
+                    catalog.signupGrantCredits * perCredit,
+                  ).toLocaleString()} characters, no card needed.`
                 : 'Sign in to get started.'}
             </p>
             <div className="mt-4">

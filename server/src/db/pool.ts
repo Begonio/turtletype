@@ -4,6 +4,24 @@ import { resolveSslOptions } from './ssl.js';
 
 const { Pool } = pg;
 
+/**
+ * Read `NUMERIC` as a JavaScript number rather than a string.
+ *
+ * node-postgres hands back numerics as strings by default, because Postgres
+ * `NUMERIC` has more range and precision than a double and the driver will not
+ * silently lose either. That is the right default in general and the wrong one
+ * here: every numeric in this schema is a credit balance or a percentage, all
+ * of them small and to two decimal places, and all of them exactly
+ * representable. Without this, `users.credits` arrives as `"1.50"` and
+ * `cost > balance` becomes a string comparison that is wrong without ever
+ * throwing — the kind of bug that shows up as a customer being charged rather
+ * than as a stack trace.
+ *
+ * Credit arithmetic still goes through `billing/amount.ts`, which works in
+ * whole hundredths, so nothing depends on floating point addition being exact.
+ */
+pg.types.setTypeParser(pg.types.builtins.NUMERIC, (value) => Number(value));
+
 export { resolveSslOptions };
 
 export const pool = new Pool({

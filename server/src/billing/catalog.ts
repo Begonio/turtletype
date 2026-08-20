@@ -3,18 +3,25 @@
  *
  * Credits, not documents or months, are the unit. The service's scarce
  * resource is concurrency-hours: a job holds a slot in the queue for a
- * duration proportional to its character count (a 10,000 character document
- * runs for roughly six and a half hours at current pacing), so a
- * character-denominated credit is the only unit that tracks what a customer
- * actually consumes. Charging per document would mean a 400 character note and
- * a 40,000 character dissertation cost the same while differing sixtyfold in
- * what they occupy.
+ * duration proportional to its character count, so a character-denominated
+ * credit is the only unit that tracks what a customer actually consumes.
+ * Charging per document would mean a 400 character note and a 40,000
+ * character dissertation cost the same while differing sixtyfold in what they
+ * occupy.
+ *
+ * One credit is five hours of typing — see `config.billing.charsPerCredit` for
+ * where that number comes from and `credits.test.ts` for the test that stops
+ * it drifting away from what the planner actually does. Charges are priced to
+ * the hundredth of a credit, so the rounding is worth a few characters rather
+ * than a few thousand.
  *
  * This module is pure: no Stripe client, no database, no environment reads
  * beyond the price IDs the deploy supplies. The client renders its pricing
  * page from `publicCatalog()`, so the numbers a customer sees and the numbers
  * that get charged cannot drift apart.
  */
+
+import { ceilCreditsFromRatio, MIN_CHARGE_CREDITS, roundCredits } from './amount.js';
 
 export type SkuKind = 'pack' | 'plan';
 
@@ -105,13 +112,30 @@ export function priceIdFor(sku: Sku): string | undefined {
 /**
  * How many credits a job of this length costs.
  *
+ * Priced to the hundredth of a credit, so what a customer pays tracks what
+ * they actually use. Rounding to whole credits meant a 400 character note and
+ * a 7,000 character essay cost the same, and the note is roughly seventeen
+ * times less work — a difference big enough that short jobs were quietly
+ * subsidising long ones and nobody could see it in the price.
+ *
  * Rounded up, and never zero: even a one-line document occupies a queue slot
  * and writes a real revision history, so it is never free once the signup
- * grant is spent.
+ * grant is spent. `MIN_CHARGE_CREDITS` is one hundredth of a credit, which at
+ * the default rate is about eighty characters.
  */
 export function creditsForChars(chars: number, charsPerCredit: number): number {
   if (chars <= 0) return 0;
-  return Math.max(1, Math.ceil(chars / charsPerCredit));
+  return Math.max(MIN_CHARGE_CREDITS, ceilCreditsFromRatio(chars, charsPerCredit));
+}
+
+/**
+ * The inverse: how much writing a balance buys. Rounded *down*, because this
+ * answers "what can I do with this", and a figure a customer cannot quite
+ * afford is worse than one that undersells by a few characters.
+ */
+export function charsForCredits(credits: number, charsPerCredit: number): number {
+  if (credits <= 0) return 0;
+  return Math.floor(roundCredits(credits) * charsPerCredit);
 }
 
 export interface PublicSku extends Omit<Sku, 'priceIdEnv'> {

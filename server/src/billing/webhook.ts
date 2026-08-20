@@ -19,6 +19,7 @@ import { config } from '../config.js';
 import { query } from '../db/pool.js';
 import type { UserRow } from '../db/types.js';
 import { findSku, priceIdFor, SKUS, type Sku } from './catalog.js';
+import { formatCreditsWithUnit, parseCredits } from './amount.js';
 import { grantCredits } from './credits.js';
 import { stripe } from './stripe.js';
 
@@ -198,14 +199,14 @@ async function onChargeRefunded(charge: Stripe.Charge): Promise<string> {
   // something to guess at automatically.
   if (!charge.refunded) return `charge ${charge.id} only partially refunded; left alone`;
 
-  const { rows } = await query<{ credits: number }>(
+  const { rows } = await query<{ credits: string | number }>(
     'SELECT credits FROM users WHERE id = $1',
     [user.id],
   );
-  const balance = rows[0]?.credits ?? 0;
+  const balance = parseCredits(rows[0]?.credits);
   if (balance <= 0) return `charge ${charge.id} refunded; balance already zero`;
 
-  const { rows: updated } = await query<{ credits: number }>(
+  const { rows: updated } = await query<{ credits: string | number }>(
     `UPDATE users SET credits = 0, updated_at = NOW() WHERE id = $1 RETURNING credits`,
     [user.id],
   );
@@ -213,9 +214,9 @@ async function onChargeRefunded(charge: Stripe.Charge): Promise<string> {
     `INSERT INTO credit_ledger (user_id, delta, balance_after, reason, reference)
      VALUES ($1, $2, $3, 'manual_adjustment', $4)
      ON CONFLICT (reason, reference) WHERE reference IS NOT NULL DO NOTHING`,
-    [user.id, -balance, updated[0]?.credits ?? 0, `refund:${charge.id}`],
+    [user.id, -balance, parseCredits(updated[0]?.credits), `refund:${charge.id}`],
   );
-  return `charge ${charge.id} refunded; cleared ${balance} credit(s)`;
+  return `charge ${charge.id} refunded; cleared ${formatCreditsWithUnit(balance)}`;
 }
 
 /** Verifies the signature and returns the parsed event, or throws. */

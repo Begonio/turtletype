@@ -4,6 +4,7 @@ import Wordmark from '../components/Wordmark';
 import GoogleButton from '../components/GoogleButton';
 import UnverifiedAppNotice from '../components/UnverifiedAppNotice';
 import { api, type CatalogResponse, type PublicConfig } from '../lib/api';
+import { formatCreditsWithUnit } from '../lib/credits';
 import { useJobStore } from '../store/useJobStore';
 
 const AUTH_ERRORS: Record<string, string> = {
@@ -59,10 +60,10 @@ function priceLine(catalog: CatalogResponse | null): string | null {
   const from = cheapest ? `packs from ${money(cheapest.amountCents, cheapest.currency)}` : null;
 
   if (catalog.signupGrantCredits > 0) {
-    const chars = (catalog.signupGrantCredits * catalog.charsPerCredit).toLocaleString();
-    const grant = `${catalog.signupGrantCredits} free ${
-      catalog.signupGrantCredits === 1 ? 'credit' : 'credits'
-    } on sign-up — ${chars} characters, no card needed`;
+    const chars = Math.floor(
+      catalog.signupGrantCredits * catalog.charsPerCredit,
+    ).toLocaleString();
+    const grant = `${formatCreditsWithUnit(catalog.signupGrantCredits)} free on sign-up — ${chars} characters, no card needed`;
     return from ? `${grant} · then ${from}` : grant;
   }
 
@@ -199,8 +200,9 @@ export default function Landing() {
               and paste is faster, free, and the right tool.
             </p>
             <p>
-              TurtleType is paid. Jobs are priced in credits, the cost of a job is shown before you
-              start it, and{' '}
+              TurtleType is paid. Jobs are priced in credits by the length of the text — to a
+              hundredth of a credit, so you pay for what you actually write. The cost of a job is
+              shown before you start it, and{' '}
               <Link to="/pricing" className="text-accent-400 underline underline-offset-2">
                 the pricing page
               </Link>{' '}

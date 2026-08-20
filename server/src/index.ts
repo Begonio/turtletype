@@ -144,6 +144,7 @@ async function main(): Promise<void> {
     if (config.billing.enabled) {
       console.log(
         `[boot] billing ON — 1 credit = ${config.billing.charsPerCredit.toLocaleString()} chars, ` +
+          `charged in steps of 0.01, ` +
           `${config.billing.signupGrantCredits} free on signup`,
       );
     } else if (config.isProduction) {

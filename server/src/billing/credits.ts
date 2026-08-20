@@ -13,10 +13,23 @@
  *    user can double-click. Idempotency is enforced by a unique index on
  *    (reason, reference) in Postgres rather than by a check-then-act in
  *    JavaScript, so two concurrent callers cannot both pass the check.
+ *
+ * 3. **Amounts are never added as floats.** Credits are priced to a hundredth,
+ *    and `0.1 + 0.2` is not `0.3` in binary floating point. Every arithmetic
+ *    step goes through `amount.ts`, which works in whole hundredths, so a
+ *    balance built from a thousand fractional charges still equals the sum of
+ *    its ledger rows exactly — which is the property `reconcile` checks.
  */
 import type { PoolClient } from 'pg';
 import { query, withTransaction } from '../db/pool.js';
 import type { JobRow } from '../db/types.js';
+import {
+  addCredits,
+  creditsEqual,
+  formatCreditsWithUnit,
+  parseCredits,
+  roundCredits,
+} from './amount.js';
 
 export type LedgerReason =
   | 'signup_grant'
@@ -43,7 +56,10 @@ export class InsufficientCreditsError extends Error {
     readonly required: number,
     readonly available: number,
   ) {
-    super(`This job needs ${required} credit(s); the account has ${available}.`);
+    super(
+      `This job needs ${formatCreditsWithUnit(required)}; ` +
+        `the account has ${formatCreditsWithUnit(available)}.`,
+    );
     this.name = 'InsufficientCreditsError';
   }
 }
@@ -67,13 +83,13 @@ interface ApplyResult {
  * transactions simply queue.
  */
 async function lockUserCredits(client: PoolClient, userId: string): Promise<number> {
-  const locked = await client.query<{ credits: number }>(
+  const locked = await client.query<{ credits: string | number }>(
     'SELECT credits FROM users WHERE id = $1 FOR UPDATE',
     [userId],
   );
   const current = locked.rows[0]?.credits;
   if (current === undefined) throw new Error(`No such user: ${userId}`);
-  return current;
+  return parseCredits(current);
 }
 
 /**
@@ -90,15 +106,23 @@ async function applyDeltaLocked(
   reason: LedgerReason,
   reference: string | null,
 ): Promise<ApplyResult> {
-  const next = current + delta;
-  if (next < 0) throw new InsufficientCreditsError(-delta, current);
+  // Snapped to the 0.01 grid before anything else, and added in hundredths
+  // rather than as floats. Two reasons. A balance that drifts by 1e-17 per
+  // charge eventually stops matching the ledger, and the mismatch would first
+  // be noticed as a customer disputing a figure. And the column is
+  // NUMERIC(12, 2), so an unrounded delta would be rounded by Postgres on the
+  // way in — leaving the stored ledger row and the balance computed from it
+  // describing subtly different movements.
+  const amount = roundCredits(delta);
+  const next = addCredits(current, amount);
+  if (next < 0) throw new InsufficientCreditsError(roundCredits(-amount), current);
 
   const inserted = await client.query<{ id: string }>(
     `INSERT INTO credit_ledger (user_id, delta, balance_after, reason, reference)
      VALUES ($1, $2, $3, $4, $5)
      ON CONFLICT (reason, reference) WHERE reference IS NOT NULL DO NOTHING
      RETURNING id`,
-    [userId, delta, next, reason, reference],
+    [userId, amount, next, reason, reference],
   );
 
   // Nothing inserted means this exact movement is already in the ledger. The
@@ -161,27 +185,28 @@ export async function createJobReservingCredits(input: {
 
     // Refuse before writing anything. The rollback would undo the job row
     // anyway, but failing here keeps the wasted work to a single SELECT.
-    if (input.credits > current) {
-      throw new InsufficientCreditsError(input.credits, current);
+    const cost = roundCredits(input.credits);
+    if (cost > current) {
+      throw new InsufficientCreditsError(cost, current);
     }
 
     const { rows } = await client.query<JobRow>(
       `INSERT INTO jobs (user_id, doc_id, doc_url, total_chars, credits_spent, status)
        VALUES ($1, $2, $3, $4, $5, 'pending')
        RETURNING *`,
-      [input.userId, input.docId, input.docUrl, input.totalChars, input.credits],
+      [input.userId, input.docId, input.docUrl, input.totalChars, cost],
     );
     const job = rows[0];
     if (!job) throw new Error('createJobReservingCredits returned no job row');
 
     // A free job (billing is disabled) still gets a row, just no ledger entry.
-    if (input.credits === 0) return { job, balance: current };
+    if (cost === 0) return { job, balance: current };
 
     const result = await applyDeltaLocked(
       client,
       input.userId,
       current,
-      -input.credits,
+      -cost,
       'job_reserve',
       job.id,
     );
@@ -199,15 +224,20 @@ export async function createJobReservingCredits(input: {
  */
 export async function refundJobCredits(jobId: string): Promise<number> {
   return withTransaction(async (client) => {
-    const { rows } = await client.query<{ user_id: string; credits_spent: number }>(
+    const { rows } = await client.query<{ user_id: string; credits_spent: string | number }>(
       'SELECT user_id, credits_spent FROM jobs WHERE id = $1',
       [jobId],
     );
     const job = rows[0];
-    if (!job || job.credits_spent <= 0) return 0;
+    if (!job) return 0;
 
-    const result = await applyDelta(client, job.user_id, job.credits_spent, 'job_refund', jobId);
-    return result.applied ? job.credits_spent : 0;
+    // Pay back exactly what the row says was taken, not what the job would
+    // cost today — pricing can change between charging and refunding.
+    const spent = parseCredits(job.credits_spent);
+    if (spent <= 0) return 0;
+
+    const result = await applyDelta(client, job.user_id, spent, 'job_refund', jobId);
+    return result.applied ? spent : 0;
   });
 }
 
@@ -248,22 +278,30 @@ export async function settleJobCredits(
 }
 
 export async function balanceOf(userId: string, client?: PoolClient): Promise<number> {
+  const sql = 'SELECT credits FROM users WHERE id = $1';
   const run = client
-    ? client.query<{ credits: number }>('SELECT credits FROM users WHERE id = $1', [userId])
-    : query<{ credits: number }>('SELECT credits FROM users WHERE id = $1', [userId]);
+    ? client.query<{ credits: string | number }>(sql, [userId])
+    : query<{ credits: string | number }>(sql, [userId]);
   const { rows } = await run;
-  return rows[0]?.credits ?? 0;
+  return parseCredits(rows[0]?.credits);
 }
 
 export async function listLedger(userId: string, limit = 50): Promise<LedgerEntry[]> {
-  const { rows } = await query<LedgerEntry>(
+  const { rows } = await query<Omit<LedgerEntry, 'delta' | 'balance_after'> & {
+    delta: string | number;
+    balance_after: string | number;
+  }>(
     `SELECT * FROM credit_ledger
       WHERE user_id = $1
       ORDER BY created_at DESC, id DESC
       LIMIT $2`,
     [userId, limit],
   );
-  return rows;
+  return rows.map((row) => ({
+    ...row,
+    delta: parseCredits(row.delta),
+    balance_after: parseCredits(row.balance_after),
+  }));
 }
 
 /**
@@ -279,7 +317,7 @@ export async function reconcile(userId: string): Promise<{
   ledgerSum: number;
   consistent: boolean;
 }> {
-  const { rows } = await query<{ credits: number; ledger_sum: string | null }>(
+  const { rows } = await query<{ credits: string | number; ledger_sum: string | number | null }>(
     `SELECT u.credits,
             (SELECT SUM(delta) FROM credit_ledger WHERE user_id = u.id) AS ledger_sum
        FROM users u
@@ -288,7 +326,10 @@ export async function reconcile(userId: string): Promise<{
   );
   const row = rows[0];
   if (!row) throw new Error(`No such user: ${userId}`);
-  const balance = row.credits;
-  const ledgerSum = Number(row.ledger_sum ?? 0);
-  return { balance, ledgerSum, consistent: balance === ledgerSum };
+  const balance = parseCredits(row.credits);
+  const ledgerSum = parseCredits(row.ledger_sum);
+  // Compared on the 0.01 grid rather than with `===`. Both sides are exact in
+  // Postgres, but they arrive here as doubles, and two amounts that agree to
+  // the hundredth can differ in the last bit after that round trip.
+  return { balance, ledgerSum, consistent: creditsEqual(balance, ledgerSum) };
 }

@@ -2,6 +2,7 @@ import type { NextFunction, Request, Response } from 'express';
 import { config } from '../config.js';
 import { findUserById } from '../db/users.js';
 import type { UserRow } from '../db/types.js';
+import { MIN_CHARGE_CREDITS, parseCredits } from '../billing/amount.js';
 
 declare module 'express-serve-static-core' {
   interface Request {
@@ -72,11 +73,17 @@ export function hasCredits(req: Request, res: Response, next: NextFunction): voi
     next();
     return;
   }
-  if (req.currentUser && req.currentUser.credits <= 0) {
+  // Below the smallest chargeable amount, no job can be afforded, so refusing
+  // here saves creating a document the submission is about to reject. Anything
+  // at or above it goes through — whether the balance covers *this* job is
+  // decided under the row lock in `createJobReservingCredits`, which is the
+  // only check that cannot be raced.
+  const balance = req.currentUser ? parseCredits(req.currentUser.credits) : 0;
+  if (req.currentUser && balance < MIN_CHARGE_CREDITS) {
     res.status(402).json({
       error: 'You are out of credits.',
       code: 'INSUFFICIENT_CREDITS',
-      credits: 0,
+      credits: balance,
     });
     return;
   }

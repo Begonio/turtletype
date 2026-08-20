@@ -3,11 +3,10 @@ import express from 'express';
 import { z } from 'zod';
 import { config } from '../config.js';
 import { findSku, priceIdFor, publicCatalog } from '../billing/catalog.js';
-import { balanceOf, listLedger } from '../billing/credits.js';
+import { balanceOf, listLedger, reconcile } from '../billing/credits.js';
 import { charsPerWord, referencePoints } from '../billing/whatYouGet.js';
 import { stripe } from '../billing/stripe.js';
 import { handleEvent, parseEvent } from '../billing/webhook.js';
-import { query } from '../db/pool.js';
 import { isAuthenticated } from '../middleware/isAuthenticated.js';
 import { HttpError } from '../middleware/errorHandler.js';
 
@@ -214,15 +213,11 @@ billingRouter.get(
   '/billing/reconcile',
   isAuthenticated,
   wrap(async (req, res) => {
-    const { rows } = await query<{ credits: number; ledger_sum: string | null }>(
-      `SELECT u.credits,
-              (SELECT SUM(delta) FROM credit_ledger WHERE user_id = u.id) AS ledger_sum
-         FROM users u WHERE u.id = $1`,
-      [req.currentUser!.id],
-    );
-    const row = rows[0];
-    const balance = row?.credits ?? 0;
-    const ledgerSum = Number(row?.ledger_sum ?? 0);
-    res.json({ balance, ledgerSum, consistent: balance === ledgerSum });
+    // Delegated to `reconcile` rather than repeating its query here. The two
+    // had drifted already — this copy compared the balance and the ledger sum
+    // with `===`, which is the wrong test now that both are fractional and
+    // arrive as doubles: two amounts equal to the hundredth can differ in the
+    // last bit, and the endpoint would report a healthy account as broken.
+    res.json(await reconcile(req.currentUser!.id));
   }),
 );

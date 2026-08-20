@@ -1,3 +1,5 @@
+import { parseCredits } from '../billing/amount.js';
+
 export interface UserRow {
   id: string;
   google_id: string;
@@ -10,7 +12,13 @@ export interface UserRow {
   stripe_customer_id: string | null;
   stripe_subscription_id: string | null;
   subscription_status: string;
-  /** Credits available to spend. Cached sum of credit_ledger.delta. */
+  /**
+   * Credits available to spend. Cached sum of credit_ledger.delta.
+   *
+   * A `NUMERIC(12, 2)` in Postgres, and a number here because `db/pool.ts`
+   * registers a type parser for numerics — without it node-postgres hands back
+   * a string and this type would be a lie.
+   */
   credits: number;
   plan: string | null;
   current_period_end: Date | null;
@@ -69,7 +77,9 @@ export function toPublicUser(row: UserRow): PublicUser {
     name: row.name,
     avatarUrl: row.avatar_url,
     subscriptionStatus: row.subscription_status,
-    credits: row.credits,
+    // Snapped to the 0.01 grid on the way out, so the browser never has to
+    // render a balance carrying a stray fifteenth decimal place.
+    credits: parseCredits(row.credits),
     plan: row.plan,
     createdAt: row.created_at.toISOString(),
   };

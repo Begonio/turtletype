@@ -24,7 +24,7 @@ CREATE INDEX IF NOT EXISTS users_email_idx ON users (email);
 -- Billing columns. Added separately from CREATE TABLE so an existing deploy
 -- picks them up: the table above is only created when absent, so a column
 -- added to it would never reach a database that already has a users table.
-ALTER TABLE users ADD COLUMN IF NOT EXISTS credits INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS credits NUMERIC(12, 2) NOT NULL DEFAULT 0;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_subscription_id TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS plan TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS current_period_end TIMESTAMPTZ;
@@ -55,8 +55,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS users_stripe_customer_idx
 CREATE TABLE IF NOT EXISTS credit_ledger (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id       UUID NOT NULL REFERENCES users (id) ON DELETE CASCADE,
-  delta         INTEGER NOT NULL,
-  balance_after INTEGER NOT NULL,
+  delta         NUMERIC(12, 2) NOT NULL,
+  balance_after NUMERIC(12, 2) NOT NULL,
   reason        TEXT NOT NULL,
   -- What caused it: a Stripe event id, a job id, an invoice id. Combined with
   -- `reason` this is what stops a redelivered webhook granting twice or a
@@ -98,7 +98,7 @@ CREATE TABLE IF NOT EXISTS jobs (
   error_message TEXT,
   -- Credits taken when the job was accepted. Kept on the row so a refund pays
   -- back exactly what was charged, even if pricing changed in between.
-  credits_spent INTEGER NOT NULL DEFAULT 0,
+  credits_spent NUMERIC(12, 2) NOT NULL DEFAULT 0,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   started_at    TIMESTAMPTZ,
   completed_at  TIMESTAMPTZ,
@@ -107,7 +107,47 @@ CREATE TABLE IF NOT EXISTS jobs (
   )
 );
 
-ALTER TABLE jobs ADD COLUMN IF NOT EXISTS credits_spent INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS credits_spent NUMERIC(12, 2) NOT NULL DEFAULT 0;
+
+-- Credits are priced to a hundredth, so the columns holding them are NUMERIC
+-- rather than INTEGER. Fresh databases get the right type from the definitions
+-- above; this widens the ones that already exist.
+--
+-- Guarded on the column's current type rather than run unconditionally. An
+-- `ALTER COLUMN ... TYPE` is not a no-op on re-run: it rewrites the whole table
+-- under an ACCESS EXCLUSIVE lock every time, which is exactly the boot-time
+-- deadlock the credits CHECK constraint above was rewritten to avoid. Asking
+-- first makes the second and every later boot do nothing at all.
+--
+-- Widening INTEGER to NUMERIC(12, 2) preserves every existing balance exactly
+-- — 4 becomes 4.00 — so there is no data migration to get wrong and no
+-- direction in which a balance can move while this runs.
+DO $$
+DECLARE
+  target CONSTANT TEXT[][] := ARRAY[
+    ['users', 'credits'],
+    ['credit_ledger', 'delta'],
+    ['credit_ledger', 'balance_after'],
+    ['jobs', 'credits_spent']
+  ];
+  row_index INT;
+BEGIN
+  FOR row_index IN 1 .. array_length(target, 1) LOOP
+    IF EXISTS (
+      SELECT 1
+        FROM information_schema.columns
+       WHERE table_schema = current_schema()
+         AND table_name = target[row_index][1]
+         AND column_name = target[row_index][2]
+         AND data_type <> 'numeric'
+    ) THEN
+      EXECUTE format(
+        'ALTER TABLE %I ALTER COLUMN %I TYPE NUMERIC(12, 2)',
+        target[row_index][1], target[row_index][2]
+      );
+    END IF;
+  END LOOP;
+END $$;
 
 CREATE INDEX IF NOT EXISTS jobs_user_created_idx ON jobs (user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS jobs_status_idx ON jobs (status);

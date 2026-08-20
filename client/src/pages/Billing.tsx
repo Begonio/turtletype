@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import Wordmark from '../components/Wordmark';
 import { ApiError, api, type BillingSummary, type CatalogResponse } from '../lib/api';
+import { creditNoun, formatCredits } from '../lib/credits';
 import { useJobStore } from '../store/useJobStore';
 
 /**
@@ -69,7 +70,7 @@ export default function Billing() {
   }
   if (!user) return null;
 
-  const perCredit = catalog?.charsPerCredit ?? 10_000;
+  const perCredit = catalog?.charsPerCredit ?? 7_700;
   const subscribed = summary?.subscriptionStatus === 'active' && Boolean(summary?.plan);
 
   return (
@@ -103,13 +104,15 @@ export default function Billing() {
         <section className="mt-8 rounded-xl border border-ink-800 bg-ink-900 p-6">
           <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-ink-400">Balance</p>
           <p className="mt-3 text-4xl font-semibold tracking-tight text-white">
-            {user.credits}
+            {formatCredits(user.credits)}
             <span className="ml-2 text-base font-normal text-ink-400">
-              {user.credits === 1 ? 'credit' : 'credits'}
+              {creditNoun(user.credits)}
             </span>
           </p>
           <p className="mt-2 text-sm text-ink-400">
-            Enough for about {(user.credits * perCredit).toLocaleString()} characters of writing.
+            Enough for about {Math.floor(user.credits * perCredit).toLocaleString()} characters of
+            writing. Jobs are charged by length, to a hundredth of a credit, so short pieces cost a
+            fraction of one.
           </p>
 
           <div className="mt-6 flex flex-wrap gap-3">
