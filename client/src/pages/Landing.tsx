@@ -113,9 +113,24 @@ export default function Landing() {
       </main>
 
       <footer className="border-t border-ink-800 py-8">
-        <div className="mx-auto max-w-5xl px-6 text-xs text-ink-400">
-          TurtleType — built for people who want their words to land like they were written, not
-          pasted.
+        <div className="mx-auto flex max-w-5xl flex-col gap-4 px-6 text-xs text-ink-400 sm:flex-row sm:items-center sm:justify-between">
+          <p>
+            TurtleType — built for people who want their words to land like they were written, not
+            pasted.
+          </p>
+          {/* Google's OAuth verification checks that the privacy policy is
+              linked from the homepage, not just reachable by URL. */}
+          <nav className="flex shrink-0 items-center gap-4">
+            <Link to="/pricing" className="transition hover:text-ink-200">
+              Pricing
+            </Link>
+            <Link to="/privacy" className="transition hover:text-ink-200">
+              Privacy
+            </Link>
+            <Link to="/terms" className="transition hover:text-ink-200">
+              Terms
+            </Link>
+          </nav>
         </div>
       </footer>
     </div>
