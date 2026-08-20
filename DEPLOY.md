@@ -88,9 +88,9 @@ login only helps if you hit anonymous pull rate limits.)
    STRIPE_WEBHOOK_SECRET=<whsec_… from the webhook endpoint you create>
    STRIPE_PRICE_PACK_STARTER=<price_… from Stripe's product catalog>
 
-   # Quoted by /privacy and /terms; set before submitting to Google
-   LEGAL_OPERATOR=<who operates the service>
-   SUPPORT_EMAIL=<public support address>
+   # Quoted by /privacy and /terms; set before submitting to Google.
+   # SUPPORT_EMAIL is optional — it already defaults to help@turtlegames.org.
+   LEGAL_OPERATOR=<legal entity or individual operating the service>
    LEGAL_JURISDICTION=<governing law, e.g. England and Wales>
    ```
 

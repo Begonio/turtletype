@@ -231,8 +231,14 @@ export const config = {
     get operator(): string {
       return process.env.LEGAL_OPERATOR?.trim() || 'TurtleType';
     },
+    /**
+     * Public support address, on the operator's own domain. Overridable, but
+     * the default is the real one rather than a placeholder — this address
+     * goes on the consent screen and both policy pages, and an unset variable
+     * should not put a personal inbox in front of reviewers and customers.
+     */
     get contactEmail(): string {
-      return process.env.SUPPORT_EMAIL?.trim() || 'wrussola45@gmail.com';
+      return process.env.SUPPORT_EMAIL?.trim() || 'help@turtlegames.org';
     },
     /** Empty until configured; the terms render a placeholder note instead of a fake. */
     get jurisdiction(): string {

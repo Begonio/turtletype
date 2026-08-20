@@ -94,13 +94,17 @@ bounces.
       under *APIs & Services → OAuth consent screen → Authorised domains*.
       Every URL you give the reviewer must sit on a verified domain.
 - [ ] **Set the operator identity variables.** No longer a code change: the
-      pages read `LEGAL_OPERATOR`, `SUPPORT_EMAIL`, `LEGAL_JURISDICTION` and
+      pages read `LEGAL_OPERATOR`, `LEGAL_JURISDICTION`, `SUPPORT_EMAIL` and
       `LEGAL_LAST_UPDATED` from `GET /api/legal` at runtime, so a correction a
       reviewer asks for is a variable change and a restart rather than a
-      redeploy — which matters when each round trip restarts their clock. Run
-      `npm run launch:check -w server` against the production environment; it
-      fails while any of them is unset. Then load `/privacy` and `/terms` and
+      redeploy — which matters when each round trip restarts their clock. The
+      first two are required and have no default; the support address already
+      defaults to `help@turtlegames.org`. Run `npm run launch:check -w server`
+      against the production environment, then load `/privacy` and `/terms` and
       confirm no amber "not configured" notice is showing.
+- [ ] **Confirm `help@turtlegames.org` is monitored.** It is the user-support
+      email on the consent screen, so Google's review correspondence goes
+      there. An unread mailbox stalls the review indefinitely.
 - [ ] **Have a lawyer look at the policy.** What is in the repo is accurate to
       what the code does — that is the part I could get right — but accuracy is
       not the same as sufficiency in your jurisdiction, and it is not legal

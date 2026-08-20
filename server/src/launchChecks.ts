@@ -162,12 +162,19 @@ export function launchReport(
 export function legalReport(env: NodeJS.ProcessEnv): LaunchProblem[] {
   const problems: LaunchProblem[] = [];
 
+  // SUPPORT_EMAIL is deliberately absent from this list. It ships with a real
+  // default (help@turtlegames.org) rather than a placeholder, so an unset
+  // variable is correct rather than unfinished — unlike the two below, where
+  // no honest default exists. Override it if the address ever changes.
+
   if (!value(env, 'LEGAL_OPERATOR')) {
     problems.push({
       subject: 'LEGAL_OPERATOR',
       detail:
-        'Who operates the service, as it should read on /privacy and /terms. Google OAuth ' +
-        'verification checks that this matches the Cloud project owner.',
+        'The legal entity or individual operating the service, as it should read on /privacy ' +
+        'and /terms. Google OAuth verification checks that this matches the Cloud project owner. ' +
+        'It falls back to the product name, which is not an operator — a customer disputing a ' +
+        'charge needs to know who they contracted with.',
     });
   }
 
@@ -177,15 +184,6 @@ export function legalReport(env: NodeJS.ProcessEnv): LaunchProblem[] {
       detail:
         'The governing law for the terms, e.g. "England and Wales" or "California, USA". ' +
         'The terms name it in the disputes section and read as unfinished without it.',
-    });
-  }
-
-  if (!value(env, 'SUPPORT_EMAIL')) {
-    problems.push({
-      subject: 'SUPPORT_EMAIL',
-      detail:
-        'The address on the legal pages and the OAuth consent screen. A role address on your ' +
-        'own domain is worth more than a personal one here — reviewers read it, and so do customers.',
     });
   }
 

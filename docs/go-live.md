@@ -17,29 +17,34 @@ for the two clocks to run in series.
 Four environment variables, set on the deployed service (Railway → the service
 → Variables), not in a file in the repo:
 
-| Variable | Example | Where it shows |
-|---|---|---|
-| `LEGAL_OPERATOR` | `Jane Smith` | /privacy, /terms |
-| `SUPPORT_EMAIL` | `support@turtlegames.org` | /privacy, /terms, OAuth consent screen |
-| `LEGAL_JURISDICTION` | `England and Wales` | /terms, governing law |
-| `LEGAL_LAST_UPDATED` | `20 August 2026` | both, as the date |
+| Variable | Example | Where it shows | Required |
+|---|---|---|---|
+| `LEGAL_OPERATOR` | `Jane Smith` | /privacy, /terms | **Yes** |
+| `LEGAL_JURISDICTION` | `England and Wales` | /terms, governing law | **Yes** |
+| `SUPPORT_EMAIL` | `help@turtlegames.org` | /privacy, /terms, OAuth consent screen | No — defaults to `help@turtlegames.org` |
+| `LEGAL_LAST_UPDATED` | `20 August 2026` | both, as the date | No |
 
 These are served by `GET /api/legal` and rendered at runtime, so correcting one
 is a variable change and a restart — not a rebuild. That matters more than it
 sounds: "please correct the operator name" is a common verification round trip,
 and every round trip restarts the reviewer's clock.
 
-Two things worth deciding rather than defaulting:
+The two required ones are required because no honest default exists for them:
 
-- **`SUPPORT_EMAIL` is public.** It goes on the policy pages and on the consent
-  screen, where reviewers and customers both read it. Unset, it falls back to
-  the personal Gmail on the account. A role address on `turtlegames.org`
-  forwarding to that inbox costs nothing and ages better.
-- **`LEGAL_JURISDICTION` has no sensible default**, so there isn't one. Left
-  unset, `/terms` shows a visible "governing law has not been configured"
-  notice instead of naming a jurisdiction. That is deliberate: an invented
-  governing law is a worse thing to publish than an obvious gap, and this is
-  the clause that decides where a dispute is heard.
+- **`LEGAL_OPERATOR` falls back to the product name**, which is not an
+  operator. A customer disputing a charge needs to know who they contracted
+  with, and Google checks this against the Cloud project owner.
+- **`LEGAL_JURISDICTION` has no default at all.** Left unset, `/terms` shows a
+  visible "governing law has not been configured" notice instead of naming a
+  jurisdiction. That is deliberate: an invented governing law is a worse thing
+  to publish than an obvious gap, and this is the clause that decides where a
+  dispute is heard.
+
+`SUPPORT_EMAIL` is not on that list because it ships with the real address —
+`help@turtlegames.org` — rather than a placeholder. Make sure that mailbox is
+actually monitored before submitting: it is where Google's review
+correspondence, deletion requests and refund requests all land, and a review
+round trip stalls while nobody reads it.
 
 > The policy text itself is written to match what the code actually does — the
 > document text never reaches Postgres, tokens are stored for the runtime of a
