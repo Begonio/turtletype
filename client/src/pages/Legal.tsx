@@ -187,12 +187,78 @@ export function Privacy() {
         </p>
       </Section>
 
-      <Section heading="Sharing">
+      <Section heading="Who else touches your data">
         <p>
-          Data is not sold or shared for advertising. It reaches third parties only where the
-          service cannot function otherwise: Google (to write your document), our hosting and
-          database provider (to run the service), and Stripe (to take payment). Each processes data
-          only to provide their service to us.
+          Your data is never sold, rented, or shared for advertising. It reaches other companies
+          only where the service cannot function otherwise, and only these:
+        </p>
+        <ul className="ml-5 list-disc space-y-2">
+          <li>
+            <span className="text-ink-200">Google</span> — to sign you in and to write the document
+            you nominate.
+          </li>
+          <li>
+            <span className="text-ink-200">Railway</span> — hosting and the database the account and
+            job records live in.
+          </li>
+          <li>
+            <span className="text-ink-200">Cloudflare</span> — DNS and traffic routing for this
+            site.
+          </li>
+          <li>
+            <span className="text-ink-200">Stripe</span> — payment processing. Stripe collects card
+            details directly; they never pass through our servers.
+          </li>
+        </ul>
+        <p>
+          Each processes data only to provide their service to us. They operate internationally, so
+          your data may be processed outside the country you are in, under the transfer safeguards
+          those providers maintain.
+        </p>
+      </Section>
+
+      <Section heading="Cookies and tracking">
+        <p>
+          TurtleType sets one cookie: a session cookie that keeps you signed in. It is HTTP-only,
+          scoped to this site, and necessary for the service to work at all — without it every page
+          load would sign you out.
+        </p>
+        <p>
+          <span className="text-ink-200">There is no analytics, advertising, or tracking of any
+          kind.</span> No Google Analytics, no advertising pixels, no session recording, no
+          third-party scripts watching what you do. That is why this site shows no cookie banner:
+          there is nothing to ask consent for beyond the cookie that signs you in.
+        </p>
+      </Section>
+
+      <Section heading="Your rights over your data">
+        <p>
+          You can ask us to show you what we hold about you, correct it, delete it, or hand it to
+          you in a portable form. You can also object to how we process it or ask us to restrict
+          that processing. Write to <Contact entity={entity} /> and we will respond within 30 days.
+        </p>
+        <p>
+          We process your data because it is necessary to provide the service you asked for and to
+          take payment for it. Nothing here relies on your consent as a legal basis except the
+          Google permission you grant at sign-in, which you can withdraw at any time from your
+          Google account.
+        </p>
+        <p>
+          If you are in the UK, the EU, or another region with a data protection authority and you
+          think we have handled your data badly, you are entitled to complain to that authority. We
+          would rather you told us first, but that right does not depend on it.
+        </p>
+      </Section>
+
+      <Section heading="Children">
+        <p>
+          TurtleType is not directed at children. We do not knowingly collect data from anyone under
+          13, and accounts must meet the age requirements in the{' '}
+          <Link to="/terms" className="text-accent-400 underline underline-offset-2">
+            terms of service
+          </Link>
+          . If you believe a child has given us data, write to <Contact entity={entity} /> and we
+          will delete it.
         </p>
       </Section>
 
@@ -247,6 +313,19 @@ export function Terms() {
         </p>
       </Section>
 
+      <Section heading="Who can use TurtleType">
+        <p>
+          You must be 18 or older to buy credits or hold an account that has been paid for. If you
+          are under 18 but at least 13, you may use TurtleType only with the involvement of a parent
+          or guardian who agrees to these terms and who makes any purchase themselves. TurtleType is
+          not for anyone under 13.
+        </p>
+        <p>
+          By using the service you confirm you meet these requirements and that you are able to
+          enter into this agreement.
+        </p>
+      </Section>
+
       <Section heading="Your responsibilities">
         <p>
           You are responsible for the text you submit and for how you use the resulting document.
@@ -280,10 +359,44 @@ export function Terms() {
         </p>
       </Section>
 
-      <Section heading="Refunds">
+      <Section heading="Cancelling a purchase and refunds">
         <p>
-          If the service does not do what it says, contact <Contact entity={entity} /> and we will
-          refund the purchase. Refunding a purchase removes the credits it provided.
+          <span className="text-ink-200">Unused credits are refundable for 14 days.</span> If you
+          buy a pack and change your mind, write to <Contact entity={entity} /> within 14 days and
+          we will refund it, provided the credits are still unspent. You do not have to give a
+          reason.
+        </p>
+        <p>
+          If you have already spent some of the credits, we will refund the unspent remainder at the
+          price you paid for them. Credits spent on jobs that ran are not refundable — the work was
+          done — though a job that fails returns its credits automatically, as described above.
+        </p>
+        <p>
+          If the service does not do what it says it does, contact us and we will refund the
+          purchase regardless of the 14 days. Refunding a purchase removes the credits it provided.
+        </p>
+        <p>
+          If you are a consumer in the UK or EU, you have a statutory right to cancel a purchase of
+          digital content within 14 days. Nothing here reduces that right, and the policy above is
+          meant to be at least as generous as it. Where the two ever disagree, the statutory right
+          wins.
+        </p>
+      </Section>
+
+      <Section heading="Suspension and closing your account">
+        <p>
+          You can stop using TurtleType at any time, and you can have your account and its data
+          deleted by writing to <Contact entity={entity} /> — see the{' '}
+          <Link to="/privacy" className="text-accent-400 underline underline-offset-2">
+            privacy policy
+          </Link>
+          . Unspent credits at that point are refundable under the section above.
+        </p>
+        <p>
+          We may suspend or close an account that is using the service unlawfully, attempting to
+          impersonate someone, abusing the infrastructure, or charging back payments in bad faith.
+          Where we do, we will say why, and we will refund unspent credits unless the account was
+          being used to break the law.
         </p>
       </Section>
 
