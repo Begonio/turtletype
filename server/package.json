@@ -24,6 +24,7 @@
     "passport": "^0.7.0",
     "passport-google-oauth20": "^2.0.0",
     "pg": "^8.13.1",
+    "stripe": "^22.5.0",
     "zod": "^3.24.1"
   },
   "devDependencies": {

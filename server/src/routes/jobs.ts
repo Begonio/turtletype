@@ -2,7 +2,9 @@ import { Router, type Request, type Response, type NextFunction } from 'express'
 import { z } from 'zod';
 import { config } from '../config.js';
 import { authorizeUser } from '../auth/googleClient.js';
-import { createJob, findJob, listJobs } from '../db/jobs.js';
+import { findJob, listJobs } from '../db/jobs.js';
+import { creditsForChars } from '../billing/catalog.js';
+import { createJobReservingCredits, InsufficientCreditsError } from '../billing/credits.js';
 import { toPublicJob } from '../db/types.js';
 import {
   createDocument,
@@ -21,7 +23,7 @@ import {
   humanize,
   minimumDurationMs,
 } from '../jobs/humanize.js';
-import { hasActiveSubscription, isAuthenticated } from '../middleware/isAuthenticated.js';
+import { hasCredits, isAuthenticated } from '../middleware/isAuthenticated.js';
 import { HttpError } from '../middleware/errorHandler.js';
 
 export const jobsRouter = Router();
@@ -96,13 +98,19 @@ jobsRouter.post(
       typos: countRepairs(plan),
       totalChars: text.length,
       maxDurationMs: config.jobs.maxJobDurationMs,
+      // What this job would cost, so the composer can show the price next to
+      // the duration instead of surfacing it only on rejection.
+      credits: config.billing.enabled
+        ? creditsForChars(text.length, config.billing.charsPerCredit)
+        : 0,
+      creditsAvailable: req.currentUser?.credits ?? 0,
     });
   }),
 );
 
 jobsRouter.post(
   '/jobs',
-  hasActiveSubscription,
+  hasCredits,
   wrap(async (req, res) => {
     const user = req.currentUser!;
     const body = createJobSchema.parse(req.body);
@@ -140,12 +148,41 @@ jobsRouter.post(
       docUrl = created.url;
     }
 
-    const job = await createJob({
-      userId: user.id,
-      docId,
-      docUrl,
-      totalChars: text.length,
-    });
+    // Price the job. With billing disabled every job is free and no ledger
+    // entry is written, so a self-hosted deploy never grows a billing history.
+    const cost = config.billing.enabled
+      ? creditsForChars(text.length, config.billing.charsPerCredit)
+      : 0;
+
+    if (cost > config.billing.maxCreditsPerJob) {
+      throw new HttpError(
+        400,
+        `That document would cost ${cost} credits, over the ${config.billing.maxCreditsPerJob}-credit ` +
+          'per-job limit. Split it across several jobs.',
+        'JOB_TOO_LARGE',
+      );
+    }
+
+    // Charging and creating the job are one transaction: an account is either
+    // charged for a job that exists, or not charged at all.
+    let job;
+    let creditsRemaining: number;
+    try {
+      const reserved = await createJobReservingCredits({
+        userId: user.id,
+        docId,
+        docUrl,
+        totalChars: text.length,
+        credits: cost,
+      });
+      job = reserved.job;
+      creditsRemaining = reserved.balance;
+    } catch (error) {
+      if (error instanceof InsufficientCreditsError) {
+        throw new HttpError(402, error.message, error.code);
+      }
+      throw error;
+    }
 
     // A job can never run faster than the natural minimum: that floor is the
     // whole reason the finished document reads as written rather than pasted.
@@ -177,6 +214,8 @@ jobsRouter.post(
       minDurationMs,
       bursts: countBursts(plan),
       typos: countRepairs(plan),
+      creditsSpent: cost,
+      creditsRemaining,
     });
   }),
 );

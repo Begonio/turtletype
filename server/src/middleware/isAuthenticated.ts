@@ -1,4 +1,5 @@
 import type { NextFunction, Request, Response } from 'express';
+import { config } from '../config.js';
 import { findUserById } from '../db/users.js';
 import type { UserRow } from '../db/types.js';
 
@@ -40,15 +41,28 @@ export async function isAuthenticated(
 }
 
 /**
- * Placeholder for the Stripe paywall. Every user is seeded 'active', so this
- * is a no-op today; when billing lands it starts returning 403 and nothing
- * else in the codebase has to change.
+ * The paywall.
+ *
+ * It only checks that the account has *some* credit, not that it has enough
+ * for this particular job: what a job costs depends on its character count,
+ * which is not known until the body has been parsed and sanitised. The exact
+ * charge is taken later, atomically, when the job row is created — see
+ * `createJobReservingCredits`. This is the cheap early rejection that keeps a
+ * user with an empty balance from getting as far as a Google Docs API call.
+ *
+ * With no Stripe keys configured the whole thing is a no-op, so a local or
+ * self-hosted deploy behaves exactly as it did before billing existed.
  */
-export function hasActiveSubscription(req: Request, res: Response, next: NextFunction): void {
-  if (req.currentUser && req.currentUser.subscription_status !== 'active') {
-    res.status(403).json({
-      error: 'An active subscription is required to start a job.',
-      code: 'SUBSCRIPTION_REQUIRED',
+export function hasCredits(req: Request, res: Response, next: NextFunction): void {
+  if (!config.billing.enabled) {
+    next();
+    return;
+  }
+  if (req.currentUser && req.currentUser.credits <= 0) {
+    res.status(402).json({
+      error: 'You are out of credits.',
+      code: 'INSUFFICIENT_CREDITS',
+      credits: 0,
     });
     return;
   }

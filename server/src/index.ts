@@ -19,6 +19,7 @@ import { closePool, pool, waitForDatabase } from './db/pool.js';
 import { disposeAllChannels } from './jobs/events.js';
 import { jobQueue } from './jobs/queue.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
+import { billingRouter, stripeWebhookRouter } from './routes/billing.js';
 import { jobsRouter } from './routes/jobs.js';
 import { meRouter } from './routes/me.js';
 
@@ -57,6 +58,11 @@ export function createApp(): express.Express {
     }),
   );
 
+  // Must precede express.json. Stripe signs the exact request bytes, and a
+  // parse-then-restringify round trip does not reproduce them, so this route
+  // needs the raw Buffer that express.json would have consumed.
+  app.use('/api', stripeWebhookRouter);
+
   app.use(express.json({ limit: '5mb' }));
 
   app.use(
@@ -90,6 +96,7 @@ export function createApp(): express.Express {
 
   app.use('/auth', authRouter);
   app.use('/api', meRouter);
+  app.use('/api', billingRouter);
   app.use('/api', jobsRouter);
 
   // Single-service deploys: serve the built SPA from the same origin, which
@@ -132,6 +139,12 @@ async function main(): Promise<void> {
     console.log(`[boot] health check at /health, client origin ${config.clientUrl}`);
     console.log(`[boot] flush interval ${config.jobs.flushIntervalMs}ms, ` +
       `write ceiling ${config.jobs.writesPerMinute}/min/job`);
+    console.log(
+      config.billing.enabled
+        ? `[boot] billing ON — 1 credit = ${config.billing.charsPerCredit.toLocaleString()} chars, ` +
+            `${config.billing.signupGrantCredits} free on signup`
+        : '[boot] billing OFF (no STRIPE_SECRET_KEY / STRIPE_WEBHOOK_SECRET) — every job is free',
+    );
   });
 
   let shuttingDown = false;
