@@ -34,7 +34,10 @@ order. Details for each step are below.
    `claude/humantype-production-app-x67x5i`. It builds the `Dockerfile` on its
    own — nothing to configure, and no Docker Hub account needed.
 2. Add the **PostgreSQL** database to the same project.
-3. Set the seven environment variables in [Option A](#option-a--railway).
+3. Set the environment variables in [Option A](#option-a--railway). With
+   `NODE_ENV=production` that now includes Stripe: the app refuses to start if
+   it cannot charge for jobs. See [Billing is required in
+   production](#billing-is-required-in-production).
 4. Add the custom domain `type.turtlegames.org` in Railway and copy the CNAME
    target it gives you.
 5. Cloudflare → DNS → `CNAME  type → <that target>`, **proxy off (grey cloud)**
@@ -42,9 +45,10 @@ order. Details for each step are below.
 6. Google Cloud Console → add the callback URL and the authorised domain.
 7. Load `https://type.turtlegames.org` and sign in.
 
-Two things will bite you if you skip them: Cloudflare's **Flexible** SSL mode
-breaks login, and a consent screen left in **Testing** expires everyone's
-refresh token after 7 days. Both are covered below.
+Three things will bite you if you skip them: Cloudflare's **Flexible** SSL mode
+breaks login, a consent screen left in **Testing** expires everyone's refresh
+token after 7 days, and a production deploy with no Stripe keys will not boot
+at all. All three are covered below.
 
 ---
 
@@ -78,6 +82,16 @@ login only helps if you hit anonymous pull rate limits.)
    GOOGLE_CALLBACK_URL=https://type.turtlegames.org/auth/google/callback
    CLIENT_URL=https://type.turtlegames.org
    TRUST_PROXY=1
+
+   # Required in production — see the note below
+   STRIPE_SECRET_KEY=<sk_live_… from Stripe>
+   STRIPE_WEBHOOK_SECRET=<whsec_… from the webhook endpoint you create>
+   STRIPE_PRICE_PACK_STARTER=<price_… from Stripe's product catalog>
+
+   # Quoted by /privacy and /terms; set before submitting to Google
+   LEGAL_OPERATOR=<who operates the service>
+   SUPPORT_EMAIL=<public support address>
+   LEGAL_JURISDICTION=<governing law, e.g. England and Wales>
    ```
 
    Leave `PORT` alone — Railway sets it. Leave `DATABASE_URL` alone too: use
@@ -93,6 +107,32 @@ login only helps if you hit anonymous pull rate limits.)
 > **Keep it at one replica.** The job queue is in memory, so two instances means
 > a job started on one is invisible to the other and its SSE stream returns
 > nothing. `railway.json` pins `numReplicas: 1`.
+
+#### Billing is required in production
+
+`NODE_ENV=production` inverts how billing fails. Everywhere else, missing
+Stripe keys mean billing is simply off and every job runs free — right for a
+laptop, right for a self-hosted box. On the deploy that is meant to charge, the
+same silence means the product is being given away and nothing tells you until
+the invoices do not arrive.
+
+So a production deploy that cannot bill refuses to boot, naming what is
+missing in the deploy log. It needs `STRIPE_SECRET_KEY`,
+`STRIPE_WEBHOOK_SECRET`, and at least one `STRIPE_PRICE_PACK_*` — the last
+because keys without prices paywall every user against a pricing page whose
+buttons are all disabled, which is the one state worse than free.
+
+Two ways forward:
+
+- **You want to charge.** Follow [`docs/stripe-setup.md`](docs/stripe-setup.md)
+  first, then come back with the keys. Verify with
+  `railway run npm run launch:check -w server`.
+- **You do not, yet.** Set `ALLOW_FREE_MODE=true`. The deploy boots, every job
+  is free, and the boot log says so on every restart. It has to be typed
+  exactly — an empty or misspelled value will not disable the paywall.
+
+The full launch sequence, including Google OAuth verification, is in
+[`docs/go-live.md`](docs/go-live.md).
 
 ### Option B — Render
 
@@ -258,6 +298,7 @@ is not compressing the stream.
 | Signs in, bounces back to the landing page | Cookie rejected. Check SSL/TLS is **Full (strict)**, not Flexible. |
 | Redirect loop | Same — Flexible SSL mode. |
 | Build succeeds, **`Network > Healthcheck` fails** | The container booted and exited. Open the **Deploy** log (not Build): a `[boot] FAILED TO START:` line names the cause. Usually a missing variable or an unreachable `DATABASE_URL`. |
+| `[boot] FAILED TO START: this production deploy cannot charge for jobs.` | Expected, and the lines under it name the missing Stripe variables. Set them, or set `ALLOW_FREE_MODE=true` to run free on purpose. See [Billing is required in production](#billing-is-required-in-production). |
 | Railway created two services named `@turtletype/client` and `@turtletype/server` | It split the npm workspaces. Delete both, create one service with **Root Directory `/`** and **Builder: Dockerfile**. This app is a single service by design. |
 | `502` / `Bad gateway` | App container not up. `docker compose logs app` or the host's log tab. |
 | Preview empty, doc still fills | SSE buffered by a proxy. |

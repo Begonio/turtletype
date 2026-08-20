@@ -51,10 +51,24 @@ export async function isAuthenticated(
  * user with an empty balance from getting as far as a Google Docs API call.
  *
  * With no Stripe keys configured the whole thing is a no-op, so a local or
- * self-hosted deploy behaves exactly as it did before billing existed.
+ * self-hosted deploy behaves exactly as it did before billing existed — except
+ * in production, where being unable to bill is a misconfiguration rather than a
+ * choice and the gate closes instead of opening.
  */
 export function hasCredits(req: Request, res: Response, next: NextFunction): void {
   if (!config.billing.enabled) {
+    // Unreachable in a correctly configured production deploy: `preflight.ts`
+    // refuses to boot one that has no Stripe keys and has not opted into free
+    // mode. It is here because the alternative failure — a paywalled service
+    // quietly handing out unlimited jobs after someone clears a variable — is
+    // both silent and expensive, and this is the one line that makes it loud.
+    if (config.isProduction && !config.billing.freeModeAllowed) {
+      res.status(503).json({
+        error: 'Billing is temporarily unavailable, so new jobs cannot be accepted.',
+        code: 'BILLING_MISCONFIGURED',
+      });
+      return;
+    }
     next();
     return;
   }
