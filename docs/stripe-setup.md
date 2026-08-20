@@ -125,7 +125,32 @@ The boot log tells you which mode you are in:
 [boot] billing OFF (no STRIPE_SECRET_KEY / STRIPE_WEBHOOK_SECRET) — every job is free
 ```
 
-## 6. Test the whole path locally
+## 6. Check that Stripe agrees with the pricing page
+
+```bash
+npm run stripe:verify -w server
+```
+
+This reads your configured price IDs, fetches each one from Stripe, and
+compares it against the catalog the pricing page renders from. It catches the
+things nothing else can:
+
+- **A price that does not match the advertised amount.** The catalog carries
+  its own `amountCents` so the page can render without a Stripe round trip, and
+  that is a cache. If the two drift, the page says $19 and Checkout takes $25 —
+  no code path compares them at runtime, so nothing else would notice.
+- **Test-mode and live-mode mixed up.** A price ID does not say which mode it
+  belongs to; the API response does. A live price with a test key fails at
+  Checkout with an unhelpful error, and this is the fastest way to see it.
+- **A one-off price on the subscription SKU, or the reverse.** Checkout would
+  open in the wrong mode and either sign a pack buyer up to a subscription or
+  charge a subscriber once.
+- **An archived price**, which Checkout refuses.
+
+Run it again whenever you change a price in Stripe, and after switching to live
+mode. It exits non-zero on any mismatch, so it works as a deploy gate.
+
+## 7. Test the whole path locally
 
 Install the [Stripe CLI](https://stripe.com/docs/stripe-cli), then:
 
@@ -163,7 +188,7 @@ Test cards for the paths worth seeing at least once:
 `4000 0000 0000 9995` declines for insufficient funds, `4000 0025 0000 3155`
 requires 3-D Secure authentication.
 
-## 7. Going live
+## 8. Going live
 
 - Activate the Stripe account (business details, bank account) — a test account
   cannot take real money.

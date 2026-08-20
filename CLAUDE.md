@@ -39,6 +39,7 @@ Monorepo, npm workspaces, `server/` + `client/`, TypeScript throughout, ESM.
 - `credit_ledger` is the source of truth; `users.credits` is a cache of it
 - Off entirely unless both `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` are set
 - Dashboard setup, webhook events and the go-live path: `docs/stripe-setup.md`
+- `npm run stripe:verify -w server` checks Stripe's real prices against the catalog's cached `amountCents` — nothing at runtime compares them, so a drift would silently bill a different figure than the page shows
 - Pricing-page figures come from `whatYouGet.ts`, which runs the real planner — never hardcode a duration or revision count into copy
 
 **Deploy**
