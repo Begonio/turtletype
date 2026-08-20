@@ -27,9 +27,9 @@ function useLegalEntity(): LegalEntity | null {
   useEffect(() => {
     let cancelled = false;
     api
-      .legal()
+      .publicConfig()
       .then((value) => {
-        if (!cancelled) setEntity(value);
+        if (!cancelled) setEntity(value.legal);
       })
       // A failed fetch leaves the fallbacks below in place. The policy text is
       // the part that matters for review and it is all static; the identity is

@@ -261,11 +261,21 @@ The app handles that expiry gracefully — it clears the dead token and sends th
 user back through consent rather than failing silently — but it is not something
 you want in production.
 
-To fix it, set the consent screen's publishing status to **In production**.
-Google requires verification for sensitive scopes, which means providing a
-privacy policy URL, a terms URL, a homepage on `turtlegames.org`, and a demo
-video showing why the app needs Docs access. Verification typically takes a few
-days to a few weeks, so start it early if you plan to open this beyond yourself.
+To fix it, set the consent screen's publishing status to **In production**. You
+can do that today, before verification finishes — the two are separate settings,
+and production removes the 7-day expiry on its own.
+
+What production does **not** remove is the "Google hasn't verified this app"
+warning, or the user cap. An unverified app in production still shows the
+warning and is limited to 100 new users over the lifetime of the project.
+Only verification lifts those, and it means providing a privacy policy URL, a
+terms URL, a homepage on `turtlegames.org`, and a demo video showing why the app
+needs Docs access. It takes weeks.
+
+So the order that costs you least is: publish to production now, submit for
+verification immediately, and treat the 100 users as a runway rather than a
+limit you will not reach. [`docs/google-oauth-verification.md`](docs/google-oauth-verification.md)
+has the full comparison and the submission checklist.
 
 If TurtleType is only ever for you and a handful of people, staying in Testing is
 fine — just expect the weekly re-consent.

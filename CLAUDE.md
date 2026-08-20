@@ -86,6 +86,18 @@ non-sensitive `drive.file` scope — the existing-doc path is a pasted URL, whic
 `drive.file` cannot reach without a Google Picker nobody has built. That
 remains the documented fallback if review drags.
 
+Publishing status and verification are **separate settings**. In production but
+unverified, users still meet the "Google hasn't verified this app" interstitial
+and the app is capped at 100 new users for the lifetime of the project — but
+grants stop expiring every 7 days, which in Testing they do. So publish to
+production early and submit verification early; only verification lifts the
+warning and the cap.
+
+`OAUTH_APP_VERIFIED` drives the sign-in warning notice (`UnverifiedAppNotice`)
+and nothing else. It is a flag rather than hardcoded copy for the same reason
+the landing page stopped hardcoding "free while in beta" — a notice about a
+temporary state outlives the state unless something removes it.
+
 `docs/google-oauth-verification.md` holds the submission checklist, the scope
 justification text, and the demo-video shot list.
 `docs/go-live.md` is the wider launch sequence (identity → billing → OAuth).

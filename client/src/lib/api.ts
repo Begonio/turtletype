@@ -143,6 +143,18 @@ export interface LegalEntity {
   lastUpdated: string;
 }
 
+/** Deployment facts the browser needs before anyone signs in. */
+export interface PublicConfig {
+  legal: LegalEntity;
+  /**
+   * False until Google finishes verifying the OAuth app. While false, everyone
+   * signing in meets the "Google hasn't verified this app" interstitial and has
+   * to click through Advanced → Go to TurtleType (unsafe), so the sign-in page
+   * says so first.
+   */
+  oauthVerified: boolean;
+}
+
 export interface JobSnapshot {
   id: string;
   docId: string;
@@ -186,8 +198,8 @@ export const api = {
 
   catalog: () => request<CatalogResponse>('/api/billing/catalog'),
 
-  /** Operator identity for /privacy and /terms. Readable without a session. */
-  legal: () => request<LegalEntity>('/api/legal'),
+  /** Operator identity and OAuth verification state. Readable without a session. */
+  publicConfig: () => request<PublicConfig>('/api/public-config'),
 
   billingSummary: () => request<BillingSummary>('/api/billing/me'),
 

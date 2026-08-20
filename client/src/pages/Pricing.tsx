@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import GoogleButton from '../components/GoogleButton';
+import UnverifiedAppNotice from '../components/UnverifiedAppNotice';
 import { ApiError, api, loginUrl, type CatalogResponse, type PricedSku } from '../lib/api';
 import { formatDuration } from '../lib/format';
 import { useJobStore } from '../store/useJobStore';
@@ -433,6 +434,7 @@ export default function Pricing() {
             <div className="mt-4">
               <GoogleButton next="/pricing" />
             </div>
+            <UnverifiedAppNotice className="mt-4" />
           </section>
         ) : null}
       </main>

@@ -1,12 +1,17 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import GoogleButton from '../components/GoogleButton';
+import UnverifiedAppNotice from '../components/UnverifiedAppNotice';
 import { api, type CatalogResponse } from '../lib/api';
 import { useJobStore } from '../store/useJobStore';
 
 const AUTH_ERRORS: Record<string, string> = {
   auth_failed: 'Google sign-in did not complete. Please try again.',
-  access_denied: 'You declined the permissions TurtleType needs to write to your document.',
+  access_denied:
+    'Sign-in was cancelled, so TurtleType did not get the permission it needs to write to your ' +
+    'document. If you stopped at Google’s “hasn’t verified this app” screen, that warning is ' +
+    'about our pending review, not about what the app does — choose Advanced → Go to TurtleType ' +
+    '(unsafe) to carry on.',
   session_failed: 'We could not start a session. Check that cookies are enabled and try again.',
   missing_permission:
     'Almost there — on the Google screen you need to tick the box for “See, edit, create and delete all your Google Docs documents”. ' +
@@ -137,6 +142,8 @@ export default function Landing() {
             TurtleType asks for permission to edit Google Docs so it can write into the document you
             choose. It never reads your Drive and never opens a file you did not point it at.
           </p>
+
+          <UnverifiedAppNotice className="mt-6" />
         </section>
 
         <section className="grid gap-px overflow-hidden rounded-xl border border-ink-800 bg-ink-800 sm:grid-cols-3">

@@ -105,8 +105,19 @@ trial cost more than it converts.
 ## 3. Get out of Testing on Google
 
 Full detail in [`google-oauth-verification.md`](google-oauth-verification.md),
-including the exact scope justification and demo-video script. The short
-version, in submission order:
+including the exact scope justification and demo-video script.
+
+**Do this first, before the checklist below:** switch the consent screen to
+**In production**. It is a separate setting from verification and you do not
+have to wait for review to use it. In Testing, grants expire after 7 days —
+which for a product whose jobs run for hours and whose users come back is not
+an inconvenience but a defect. Production removes that. It does *not* remove
+the "Google hasn't verified this app" warning or the user cap: unverified in
+production still shows the warning and allows 100 new users over the lifetime
+of the project, non-resettable. Treat those 100 as your runway and submit
+verification the same week you start charging.
+
+Then, in submission order:
 
 - [ ] **Verify `turtlegames.org` in Search Console** using the Google account
       that owns the Cloud project, then add it under *APIs & Services → OAuth
@@ -124,6 +135,10 @@ version, in submission order:
 - [ ] **Watch the developer contact inbox.** Replies go there and the clock
       restarts on each round trip; the usual follow-up is a re-record of the
       video showing something they could not see.
+- [ ] **When it is granted, set `OAUTH_APP_VERIFIED=true`.** That removes the
+      "Google will show a warning first" notice from the sign-in and pricing
+      pages. Nothing else reads the flag, so a forgotten one only means warning
+      people about a screen they will not see.
 
 Expect a first response in several business days and the whole thing to take
 weeks. Sensitive-scope apps are re-reviewed annually — letting that lapse drops
