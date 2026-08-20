@@ -21,6 +21,7 @@ import { jobQueue } from './jobs/queue.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { billingRouter, stripeWebhookRouter } from './routes/billing.js';
 import { jobsRouter } from './routes/jobs.js';
+import { legalRouter } from './routes/legal.js';
 import { meRouter } from './routes/me.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -95,6 +96,7 @@ export function createApp(): express.Express {
   });
 
   app.use('/auth', authRouter);
+  app.use('/api', legalRouter);
   app.use('/api', meRouter);
   app.use('/api', billingRouter);
   app.use('/api', jobsRouter);
@@ -139,12 +141,20 @@ async function main(): Promise<void> {
     console.log(`[boot] health check at /health, client origin ${config.clientUrl}`);
     console.log(`[boot] flush interval ${config.jobs.flushIntervalMs}ms, ` +
       `write ceiling ${config.jobs.writesPerMinute}/min/job`);
-    console.log(
-      config.billing.enabled
-        ? `[boot] billing ON — 1 credit = ${config.billing.charsPerCredit.toLocaleString()} chars, ` +
-            `${config.billing.signupGrantCredits} free on signup`
-        : '[boot] billing OFF (no STRIPE_SECRET_KEY / STRIPE_WEBHOOK_SECRET) — every job is free',
-    );
+    if (config.billing.enabled) {
+      console.log(
+        `[boot] billing ON — 1 credit = ${config.billing.charsPerCredit.toLocaleString()} chars, ` +
+          `${config.billing.signupGrantCredits} free on signup`,
+      );
+    } else if (config.isProduction) {
+      // preflight.ts only lets this happen when free mode was asked for
+      // explicitly, so say which of the two it is rather than just "off".
+      console.warn('[boot] billing OFF in production (ALLOW_FREE_MODE) — every job is free');
+    } else {
+      console.log(
+        '[boot] billing OFF (no STRIPE_SECRET_KEY / STRIPE_WEBHOOK_SECRET) — every job is free',
+      );
+    }
   });
 
   let shuttingDown = false;

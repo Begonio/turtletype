@@ -37,10 +37,12 @@ Monorepo, npm workspaces, `server/` + `client/`, TypeScript throughout, ESM.
 - Stripe Checkout (packs + one subscription) and the hosted billing portal
 - Credits: 1 credit = 10,000 chars, priced per job and charged on submission
 - `credit_ledger` is the source of truth; `users.credits` is a cache of it
-- Off entirely unless both `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` are set
+- Off entirely unless both `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` are set — except in production, where `launchChecks.ts` refuses to boot a deploy that cannot bill (`ALLOW_FREE_MODE=true` opts out deliberately)
+- New accounts get 1 free credit (`SIGNUP_GRANT_CREDITS`) as the trial; the paywall bites from the second job
 - Dashboard setup, webhook events and the go-live path: `docs/stripe-setup.md`
 - `npm run stripe:verify -w server` checks Stripe's real prices against the catalog's cached `amountCents` — nothing at runtime compares them, so a drift would silently bill a different figure than the page shows
 - Pricing-page figures come from `whatYouGet.ts`, which runs the real planner — never hardcode a duration or revision count into copy
+- The landing page's price line is derived from the live catalog for the same reason: it used to read "free while in beta", which stayed on the page after it stopped being true
 
 **Deploy**
 - Multi-stage Dockerfile (tini, non-root user, healthcheck)
@@ -63,6 +65,9 @@ Monorepo, npm workspaces, `server/` + `client/`, TypeScript throughout, ESM.
 - **The Stripe webhook route mounts before `express.json`** and takes the raw body — signature verification needs the exact bytes Stripe signed.
 - **Webhooks are the only place credit is created.** A Checkout success URL is just a URL a user can open.
 - **`config.ts` keeps secrets behind getters** so pure modules can be imported in tests without a live database.
+- **Billing fails open in development and closed in production.** `config.billing.enabled` is false with no Stripe keys and the paywall waves jobs through — correct on a laptop, a silent giveaway on the deploy that is meant to charge. `preflight.ts` runs `launchChecks.ts` and exits non-zero in production unless the deploy can bill, and `hasCredits` answers 503 rather than `next()` if it ever finds itself there anyway. Don't "simplify" either back into a plain `next()`.
+- **`launchChecks.ts` is pure** — it reads an env object passed to it, never `process.env` directly, so the launch rules are testable without an environment. Same discipline as `humanize.ts`.
+- **Operator identity lives in env, not in the client bundle.** `/privacy` and `/terms` read `LEGAL_OPERATOR`, `SUPPORT_EMAIL`, `LEGAL_JURISDICTION` from `GET /api/legal` at runtime. Google's OAuth review commonly asks for a correction here, and every round trip restarts their clock — a variable change beats a redeploy. An unset jurisdiction renders a visible notice rather than an invented one; don't replace it with a plausible default.
 - **`preflight.ts` must stay the first import in `index.ts`.** It validates env before `db/pool.ts` reads it at module load. Reordering imports can silently break env validation.
 - **Regenerate `package-lock.json` whenever `package.json` changes.** A rename passed locally and failed on Railway's `npm ci`, because local dev reuses `node_modules` and never revalidates the lockfile.
 
@@ -75,12 +80,23 @@ The remaining lever is burst size: duration is essentially `bursts x (burst span
 ## Google OAuth verification
 
 The app is capped at 100 test users because `auth/documents` is a **sensitive**
-scope and the OAuth app is in Testing status. `docs/google-oauth-verification.md`
-covers both routes out: full verification, or switching to the non-sensitive
-`drive.file` scope (which needs a Google Picker for the existing-doc path but
-skips review entirely). `/privacy` and `/terms` exist because verification
-requires them — the `ENTITY` placeholders in `client/src/pages/Legal.tsx` must
-be filled in before submitting.
+scope and the OAuth app is in Testing status. **Decision (August 2026): stay on
+`documents` and go through verification** rather than switching to the
+non-sensitive `drive.file` scope — the existing-doc path is a pasted URL, which
+`drive.file` cannot reach without a Google Picker nobody has built. That
+remains the documented fallback if review drags.
+
+`docs/google-oauth-verification.md` holds the submission checklist, the scope
+justification text, and the demo-video shot list.
+`docs/go-live.md` is the wider launch sequence (identity → billing → OAuth).
+
+The scope justification tells reviewers document content is never stored — that
+is true today (`jobs` holds `doc_id`, `total_chars` and status, never text) and
+it is the strongest claim in the submission. If a change would make it false,
+that change breaks the verification, not just a comment.
+
+`npm run launch:check -w server` is the gate before submitting: stricter than
+the boot check, and it fails while the legal identity variables are unset.
 
 ## Working conventions
 

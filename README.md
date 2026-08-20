@@ -352,15 +352,31 @@ origin and `NODE_ENV=production`; the session cookie automatically switches to
   start automatically as slots free. For horizontal scaling, the in-memory queue would need to move
   to Redis or Postgres advisory locks — SSE would then need sticky sessions or a pub/sub fan-out.
 
-## Stripe, later
+## Billing
 
-The groundwork is already in place, so wiring up billing touches almost nothing:
+Jobs are paid for in credits: **1 credit = 10,000 characters**, rounded up, priced and charged when
+the job is submitted. Packs never expire; there is also one monthly plan. Stripe Checkout takes the
+money and Stripe's hosted portal handles cards, invoices and cancellation, so card details never
+reach this service.
 
-- `users.stripe_customer_id` and `users.subscription_status` already exist. Everyone is created
-  `'active'`, so the app is free today.
-- `hasActiveSubscription` in `server/src/middleware/isAuthenticated.ts` is already applied to
-  `POST /api/jobs`. It returns `403 SUBSCRIPTION_REQUIRED` the moment a user's status is anything
-  other than `'active'`.
+`credit_ledger` is the source of truth and `users.credits` is a cache of its sum — `reconcile()`
+proves they agree. Credit moves and the ledger row explaining them are written in one transaction,
+as are charging for a job and creating its row. Idempotency comes from a unique index on
+`(reason, reference)` rather than a check-then-act, keyed on the *payment object* (Checkout session,
+invoice) because Stripe emits several events per payment. Webhooks are the only place credit is
+created; a Checkout success URL is just a URL a user can open.
 
-So Stripe integration is: checkout session, customer portal, and a webhook that writes
-`subscription_status`. No changes to the job pipeline at all.
+Failed jobs are always refunded, and a job cancelled before roughly a tenth of the text is written
+is too — see `settleJobCredits`.
+
+**Off by default, required in production.** With no `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET`
+the paywall waves everything through, which is what you want on a laptop or a self-hosted instance.
+In production that default inverts: `launchChecks.ts` refuses to boot a deploy that cannot bill,
+because "free for everyone" there is not a degraded mode, it is the product being given away
+silently. `ALLOW_FREE_MODE=true` opts back out on purpose.
+
+- Dashboard setup and the go-live path: [`docs/stripe-setup.md`](docs/stripe-setup.md)
+- Full launch checklist, including Google OAuth: [`docs/go-live.md`](docs/go-live.md)
+- `npm run launch:check -w server` — verifies the deploy can actually take payment
+- `npm run stripe:verify -w server` — checks Stripe's real prices against the catalog's cached
+  `amountCents`, since nothing at runtime compares them

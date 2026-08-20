@@ -1,6 +1,7 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import GoogleButton from '../components/GoogleButton';
+import { api, type CatalogResponse } from '../lib/api';
 import { useJobStore } from '../store/useJobStore';
 
 const AUTH_ERRORS: Record<string, string> = {
@@ -27,12 +28,56 @@ const STEPS = [
   },
 ];
 
+const money = (cents: number, currency: string): string =>
+  new Intl.NumberFormat(undefined, {
+    style: 'currency',
+    currency: currency.toUpperCase(),
+    minimumFractionDigits: cents % 100 === 0 ? 0 : 2,
+  }).format(cents / 100);
+
+/**
+ * The line under the sign-in button.
+ *
+ * Read off the live catalog rather than written here. The copy this replaced
+ * said "free while in beta", which was true right up until it silently was
+ * not; deriving it from the same data the pricing page and the checkout use
+ * means it cannot go stale again when the grant or the cheapest pack changes.
+ */
+function priceLine(catalog: CatalogResponse | null): string | null {
+  if (!catalog) return null;
+  if (!catalog.enabled) return 'Free on this deployment · no card required';
+
+  const cheapest = catalog.skus
+    .filter((sku) => sku.kind === 'pack' && sku.available)
+    .sort((a, b) => a.amountCents - b.amountCents)[0];
+  const from = cheapest ? `packs from ${money(cheapest.amountCents, cheapest.currency)}` : null;
+
+  if (catalog.signupGrantCredits > 0) {
+    const chars = (catalog.signupGrantCredits * catalog.charsPerCredit).toLocaleString();
+    const grant = `${catalog.signupGrantCredits} free ${
+      catalog.signupGrantCredits === 1 ? 'credit' : 'credits'
+    } on sign-up — ${chars} characters, no card needed`;
+    return from ? `${grant} · then ${from}` : grant;
+  }
+
+  return from ? `Credits ${from}` : 'Sign in to get started';
+}
+
 export default function Landing() {
   const user = useJobStore((state) => state.user);
   const authChecked = useJobStore((state) => state.authChecked);
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const authError = params.get('error');
+  const [catalog, setCatalog] = useState<CatalogResponse | null>(null);
+  const price = priceLine(catalog);
+
+  // Public endpoint, so this runs signed out — which is the only state that
+  // sees this page. A failure leaves the line out entirely rather than
+  // showing a price that might be wrong.
+  useEffect(() => {
+    void api.catalog().then(setCatalog).catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (authChecked && user) navigate('/app', { replace: true });
@@ -78,9 +123,14 @@ export default function Landing() {
 
           <div className="mt-10 flex flex-wrap items-center gap-4">
             <GoogleButton />
-            <span className="text-sm text-ink-400">
-              Free while in beta · no card required
-            </span>
+            {price ? (
+              <span className="text-sm text-ink-400">
+                {price} ·{' '}
+                <Link to="/pricing" className="underline underline-offset-2 hover:text-ink-200">
+                  Pricing
+                </Link>
+              </span>
+            ) : null}
           </div>
 
           <p className="mt-4 max-w-xl text-xs leading-relaxed text-ink-400">

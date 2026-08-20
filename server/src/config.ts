@@ -169,11 +169,15 @@ export const config = {
   /**
    * Billing.
    *
-   * Everything here is optional: with no Stripe keys set the app runs exactly
-   * as it did before billing existed — `billing.enabled` is false and the
-   * paywall lets every job through. That keeps local development and the test
-   * suite free of Stripe entirely, and means a misconfigured deploy degrades
-   * to "free for everyone" rather than "nobody can do anything".
+   * Off by default: with no Stripe keys set `billing.enabled` is false and the
+   * paywall lets every job through, which keeps local development and the test
+   * suite free of Stripe entirely and lets a self-hosted instance run without
+   * a payment processor.
+   *
+   * That default is inverted in production. Degrading to "free for everyone"
+   * is fine on a laptop and unacceptable on the deploy that is supposed to
+   * charge, so `launchChecks.ts` refuses to boot a production instance that
+   * cannot bill. `ALLOW_FREE_MODE=true` opts back out, deliberately.
    */
   billing: {
     get secretKey(): string {
@@ -193,6 +197,15 @@ export const config = {
       return Boolean(process.env.STRIPE_SECRET_KEY && process.env.STRIPE_WEBHOOK_SECRET);
     },
     /**
+     * Whether running without billing is a deliberate choice rather than a
+     * misconfiguration. Only consulted in production, where the boot check
+     * would otherwise have refused to start.
+     */
+    get freeModeAllowed(): boolean {
+      const raw = process.env.ALLOW_FREE_MODE?.trim();
+      return raw === 'true' || raw === '1';
+    },
+    /**
      * How many characters one credit buys. Credits are the unit the user
      * sees, and they track the resource the service is actually short of:
      * a job holds a concurrency slot for a length of time proportional to its
@@ -203,6 +216,31 @@ export const config = {
     signupGrantCredits: num('SIGNUP_GRANT_CREDITS', 1),
     /** Longest a single job may be, in credits. Guards against one job eating a whole pack. */
     maxCreditsPerJob: num('MAX_CREDITS_PER_JOB', 20),
+  },
+
+  /**
+   * The identity the legal pages and the OAuth consent screen quote.
+   *
+   * Read at runtime and served to the browser rather than compiled into the
+   * bundle, so changing the support address or the operating entity is an
+   * environment change on the platform rather than a rebuild and redeploy.
+   * Google's OAuth review checks that these agree with the Cloud project's
+   * owner and support contact, and re-checks annually.
+   */
+  legal: {
+    get operator(): string {
+      return process.env.LEGAL_OPERATOR?.trim() || 'TurtleType';
+    },
+    get contactEmail(): string {
+      return process.env.SUPPORT_EMAIL?.trim() || 'wrussola45@gmail.com';
+    },
+    /** Empty until configured; the terms render a placeholder note instead of a fake. */
+    get jurisdiction(): string {
+      return process.env.LEGAL_JURISDICTION?.trim() || '';
+    },
+    get lastUpdated(): string {
+      return process.env.LEGAL_LAST_UPDATED?.trim() || '20 August 2026';
+    },
   },
 
   backoff: {

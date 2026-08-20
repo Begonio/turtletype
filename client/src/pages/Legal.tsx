@@ -1,4 +1,6 @@
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { api, type LegalEntity } from '../lib/api';
 
 /**
  * Privacy policy and terms.
@@ -13,19 +15,61 @@ import { Link } from 'react-router-dom';
  * data handling changes, this changes with it — a policy that overstates or
  * understates what happens is worse than none, both for users and for review.
  *
- * The placeholders in ENTITY are the only things a deploy must fill in.
+ * Who operates the service comes from the API rather than from a constant
+ * here. A reviewer asking for the operator name or support address to be
+ * corrected is a common round trip, and each round trip restarts their clock —
+ * so that correction should be an environment variable on the platform, not a
+ * rebuild of this bundle.
  */
-const ENTITY = {
-  /** Legal entity or individual operating the service. */
-  operator: '[Operator name]',
-  /** Where support and privacy requests are handled. */
-  contactEmail: '[support@yourdomain]',
-  /** Governing jurisdiction for the terms. */
-  jurisdiction: '[jurisdiction]',
-  lastUpdated: '20 August 2026',
-};
+function useLegalEntity(): LegalEntity | null {
+  const [entity, setEntity] = useState<LegalEntity | null>(null);
 
-function Shell({ title, children }: { title: string; children: React.ReactNode }) {
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .legal()
+      .then((value) => {
+        if (!cancelled) setEntity(value);
+      })
+      // A failed fetch leaves the fallbacks below in place. The policy text is
+      // the part that matters for review and it is all static; the identity is
+      // one line of it, and a blank page would be the worse failure.
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return entity;
+}
+
+/** The operator's name, or the product name until the real one has loaded. */
+function operatorName(entity: LegalEntity | null): string {
+  return entity?.operator ?? 'TurtleType';
+}
+
+/** Contact address as a mailto, degrading to prose before it is known. */
+function Contact({ entity }: { entity: LegalEntity | null }) {
+  if (!entity?.contactEmail) return <>our support address</>;
+  return (
+    <a
+      href={`mailto:${entity.contactEmail}`}
+      className="text-accent-400 underline underline-offset-2"
+    >
+      {entity.contactEmail}
+    </a>
+  );
+}
+
+function Shell({
+  title,
+  entity,
+  children,
+}: {
+  title: string;
+  entity: LegalEntity | null;
+  children: React.ReactNode;
+}) {
   return (
     <div className="min-h-full bg-ink-950">
       <header className="mx-auto flex max-w-3xl items-center justify-between px-6 py-6">
@@ -47,7 +91,7 @@ function Shell({ title, children }: { title: string; children: React.ReactNode }
           {title}
         </h1>
         <p className="mt-3 font-mono text-xs text-ink-500">
-          Last updated {ENTITY.lastUpdated}
+          {entity ? `Last updated ${entity.lastUpdated}` : '\u00a0'}
         </p>
         <div className="mt-10 space-y-8 text-sm leading-relaxed text-ink-300">{children}</div>
       </main>
@@ -65,8 +109,10 @@ function Section({ heading, children }: { heading: string; children: React.React
 }
 
 export function Privacy() {
+  const entity = useLegalEntity();
+
   return (
-    <Shell title="Privacy policy">
+    <Shell title="Privacy policy" entity={entity}>
       <p>
         TurtleType writes text you provide into a Google Docs document on your behalf. This policy
         describes exactly what data that involves, why each piece is needed, and how long it is
@@ -153,8 +199,8 @@ export function Privacy() {
       <Section heading="Retention and deletion">
         <p>
           Job records are kept so you can see your own history. You can delete your account and
-          everything associated with it by emailing {ENTITY.contactEmail}; we remove your account,
-          tokens and job records within 30 days. Billing records are retained where tax or
+          everything associated with it by emailing <Contact entity={entity} />; we remove your
+          account, tokens and job records within 30 days. Billing records are retained where tax or
           accounting law requires it.
         </p>
         <p>
@@ -180,8 +226,8 @@ export function Privacy() {
 
       <Section heading="Contact">
         <p>
-          {ENTITY.operator} operates this service. Privacy questions, data requests and deletion
-          requests go to {ENTITY.contactEmail}.
+          {operatorName(entity)} operates this service. Privacy questions, data requests and
+          deletion requests go to <Contact entity={entity} />.
         </p>
       </Section>
     </Shell>
@@ -189,8 +235,10 @@ export function Privacy() {
 }
 
 export function Terms() {
+  const entity = useLegalEntity();
+
   return (
-    <Shell title="Terms of service">
+    <Shell title="Terms of service" entity={entity}>
       <Section heading="What the service does">
         <p>
           TurtleType writes text you supply into a Google Docs document over an extended period,
@@ -234,8 +282,8 @@ export function Terms() {
 
       <Section heading="Refunds">
         <p>
-          If the service does not do what it says, contact {ENTITY.contactEmail} and we will refund
-          the purchase. Refunding a purchase removes the credits it provided.
+          If the service does not do what it says, contact <Contact entity={entity} /> and we will
+          refund the purchase. Refunding a purchase removes the credits it provided.
         </p>
       </Section>
 
@@ -250,7 +298,7 @@ export function Terms() {
 
       <Section heading="Liability">
         <p>
-          The service is provided as is. To the extent the law allows, {ENTITY.operator}'s
+          The service is provided as is. To the extent the law allows, {operatorName(entity)}'s
           liability for any claim relating to the service is limited to the amount you paid for it
           in the twelve months before the claim.
         </p>
@@ -259,8 +307,20 @@ export function Terms() {
       <Section heading="Changes and governing law">
         <p>
           These terms may change; material changes will be announced on this page with a new date.
-          They are governed by the laws of {ENTITY.jurisdiction}.
         </p>
+        {entity?.jurisdiction ? (
+          <p>They are governed by the laws of {entity.jurisdiction}.</p>
+        ) : entity ? (
+          // Deliberately visible rather than a plausible-looking default. An
+          // invented governing law is a worse thing to publish than an
+          // obvious gap, and this is the sentence a Google reviewer and a
+          // disputing customer both read. LEGAL_JURISDICTION fixes it.
+          <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-amber-200">
+            Governing law has not been configured for this deployment. Set{' '}
+            <code className="font-mono text-xs">LEGAL_JURISDICTION</code> before accepting
+            payments.
+          </p>
+        ) : null}
       </Section>
     </Shell>
   );

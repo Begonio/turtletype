@@ -130,6 +130,19 @@ export interface EstimateResponse {
   creditsAvailable: number;
 }
 
+/**
+ * Who runs the service, as the legal pages should name them. Served by the API
+ * rather than baked into the bundle so a correction during Google's OAuth
+ * review is an environment change rather than a redeploy.
+ */
+export interface LegalEntity {
+  operator: string;
+  contactEmail: string;
+  /** Empty when the deploy has not set one — the page says so rather than inventing it. */
+  jurisdiction: string;
+  lastUpdated: string;
+}
+
 export interface JobSnapshot {
   id: string;
   docId: string;
@@ -172,6 +185,9 @@ export const api = {
   logout: () => request<{ ok: true }>('/auth/logout', { method: 'POST' }),
 
   catalog: () => request<CatalogResponse>('/api/billing/catalog'),
+
+  /** Operator identity for /privacy and /terms. Readable without a session. */
+  legal: () => request<LegalEntity>('/api/legal'),
 
   billingSummary: () => request<BillingSummary>('/api/billing/me'),
 

@@ -6,6 +6,13 @@ hand, and their grants expire after 7 days. Moving to **In production** removes
 it. What it takes to move there depends entirely on which scopes you ask for,
 and that is the decision this document is really about.
 
+> **Decision (August 2026): stay on `documents` and verify.** The alternative
+> is written out below because it is genuinely the cheaper path and worth
+> understanding before committing — but the call has been made, and everything
+> from "If you stay on `documents`" onward is the live checklist. Read the fork
+> if you want to know what was traded away; skip to
+> [what to actually do](#if-you-stay-on-documents) if you just want to submit.
+
 ## The fork in the road
 
 TurtleType currently requests `https://www.googleapis.com/auth/documents` —
@@ -60,9 +67,17 @@ checkbox. The narrower scope removes the objection instead of explaining it.
    scope. `includeGrantedScopes: true` is already set in `auth/routes.ts`, so
    the transition is a re-prompt rather than a break.
 
-My recommendation: spend the ten minutes on step 1. If it confirms, do the
-Picker work and skip verification entirely. Verification is not hard, but it is
-weeks of latency you cannot compress, and it recurs annually.
+The case for switching was: verification is weeks of latency you cannot
+compress, and it recurs annually. The case against — the one that won — is that
+the Picker is real UI work on the path most users take, `drive.file` cannot
+reach a document the user pastes a link to without it, and the ten-minute
+compatibility test in step 1 was never run. Verification costs waiting; the
+switch costs a rewrite of the existing-doc flow plus forcing every current user
+to re-consent.
+
+**This remains the fallback.** If review comes back with change requests you do
+not want to meet, or drags past what the launch can absorb, step 1 is still ten
+minutes and the escape hatch is still open.
 
 ## If you stay on `documents`
 
@@ -78,10 +93,14 @@ bounces.
       using the same Google account that owns the Cloud project. Then add it
       under *APIs & Services → OAuth consent screen → Authorised domains*.
       Every URL you give the reviewer must sit on a verified domain.
-- [ ] **Fill in the placeholders in `client/src/pages/Legal.tsx`.** The `ENTITY`
-      constant at the top has four: operator name, contact email, jurisdiction,
-      and last-updated date. A reviewer reading `[Operator name]` will reject
-      it, and rightly.
+- [ ] **Set the operator identity variables.** No longer a code change: the
+      pages read `LEGAL_OPERATOR`, `SUPPORT_EMAIL`, `LEGAL_JURISDICTION` and
+      `LEGAL_LAST_UPDATED` from `GET /api/legal` at runtime, so a correction a
+      reviewer asks for is a variable change and a restart rather than a
+      redeploy — which matters when each round trip restarts their clock. Run
+      `npm run launch:check -w server` against the production environment; it
+      fails while any of them is unset. Then load `/privacy` and `/terms` and
+      confirm no amber "not configured" notice is showing.
 - [ ] **Have a lawyer look at the policy.** What is in the repo is accurate to
       what the code does — that is the part I could get right — but accuracy is
       not the same as sufficiency in your jurisdiction, and it is not legal
@@ -89,20 +108,11 @@ bounces.
 - [ ] **Complete the OAuth consent screen.** App name, user-support email, an
       app logo (120×120 PNG), the homepage, the privacy policy URL, the terms
       URL, and a developer contact email. All required, all checked.
-- [ ] **Write the scope justification.** This is the field the review turns on.
-      Say plainly: the app writes user-supplied text into a Google Doc the user
-      nominates; it needs `documents` to append text to an existing document
-      the user identifies by URL and to read the document's current length so
-      the insertion point is correct; it does not read, store, index or analyse
-      document content. That last clause is true of this codebase — the
-      document text is never written to Postgres, only held in memory while the
-      job runs — and it is the strongest thing you can say.
-- [ ] **Record the demo video.** Unlisted YouTube is fine. Reviewers reject
-      videos that skip steps, so show, in one take: the OAuth consent screen
-      with the URL bar visible and the client ID legible, ticking the Docs
-      permission, landing in the app, pasting text, starting a job, and the
-      text appearing in the document. Narrate why the scope is needed at the
-      consent step. Two to three minutes.
+- [ ] **Paste the scope justification.** This is the field the review turns
+      on. Text ready to use is in [Scope justification](#scope-justification)
+      below.
+- [ ] **Record the demo video** to the shot list in
+      [Demo video script](#demo-video-script) below. Unlisted YouTube is fine.
 - [ ] **Switch publishing status to In production** and submit.
 
 ### After you submit
@@ -115,6 +125,80 @@ could not see the first time.
 
 Note that verification is not permanent: sensitive-scope apps are re-reviewed
 annually, and letting that lapse drops you back behind the cap.
+
+### Scope justification
+
+The field the review turns on. Paste this, adjusting only the operator name:
+
+> TurtleType writes text that the user supplies into a Google Docs document
+> that the user nominates. The user pastes their own text into our app, gives
+> us a document link or asks us to create a new document, and we insert that
+> text into the document gradually over a period the user chooses.
+>
+> We request `https://www.googleapis.com/auth/documents` for exactly two
+> operations, both on documents the user has identified:
+>
+> 1. `documents.batchUpdate` — to insert the user's own text into the document.
+>    This is the entire function of the product.
+> 2. `documents.get` — to read the document's current length, so that text is
+>    appended at the correct index rather than overwriting existing content. We
+>    request only the structural fields needed to compute that index.
+>
+> We do not read, store, index, analyse, or transmit document content. The text
+> the user submits is held in server memory only while their job is running and
+> is never written to our database; our database stores only the document ID,
+> the character count, and the job's status. No document content is used for
+> advertising, sold, shared, or used to train machine-learning models, and no
+> human at our organisation reads user documents.
+>
+> A narrower scope is not sufficient for our core use case. Most of our users
+> want the text written into a document that already exists — an assignment
+> template, a shared draft — which they identify to us by pasting its URL.
+> `drive.file` grants access only to files our app created or that were passed
+> through the Google Picker, so it cannot reach a document identified by link,
+> which is the primary flow.
+
+That last paragraph is the one reviewers actually weigh — they ask why
+`drive.file` will not do, and "we did not want to build a Picker" is not an
+answer. The reason given above is true of the product as it stands: the
+existing-document path is a pasted URL. If you later build the Picker, this
+justification stops being true, and at that point you should be switching
+scopes rather than defending this one.
+
+Everything else above is verifiable against the code, which is what makes it
+worth saying: the text never reaches Postgres (`jobs` stores `doc_id`,
+`total_chars` and status, never the text), and `getAppendIndex` in
+`server/src/docs/documents.ts` is the only read.
+
+### Demo video script
+
+Reviewers reject videos that skip steps or cut between them, because a cut is
+where a step could have been hidden. Record in one take, 2–3 minutes, screen
+only, with narration. Keep the browser URL bar visible throughout.
+
+1. **Start signed out**, on `https://type.turtlegames.org`. Let the URL bar be
+   readable for a beat.
+2. **Click Sign in with Google.** On the consent screen, pause long enough that
+   the client ID in the URL is legible — they check it matches the project
+   under review — and read the requested permission aloud.
+3. **Tick the Google Docs permission box** on camera, and say why it is needed
+   while you do: *"TurtleType needs this to write my text into the document I
+   choose. It reads the document's length so it knows where to add text, and
+   nothing else."*
+4. **Land in the app** signed in.
+5. **Paste text** into the composer.
+6. **Choose the existing-document option and paste a Google Docs URL.** This is
+   the step that justifies the scope over `drive.file` — do not skip it and do
+   not use the create-new-document path here.
+7. **Start the job.** Show the progress panel and the cost in credits.
+8. **Switch to the Google Doc** in another tab and show the text arriving.
+9. **Show the document's version history** (File → Version history) with
+   several separate revisions. This is worth including even though review does
+   not require it: it shows a reviewer what the product is for, which makes the
+   scope request read as purposeful rather than broad.
+
+Do not show a payment flow. It is not what they are reviewing, and it lengthens
+the video.
 
 ## Separately: check your API quota before you have traffic
 
