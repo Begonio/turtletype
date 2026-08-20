@@ -59,13 +59,30 @@ export interface PricedSku {
   centsPerCredit: number;
 }
 
+/**
+ * A worked example, measured by running the real planner server-side rather
+ * than written into the marketing copy — so the page cannot promise pacing the
+ * engine does not deliver.
+ */
+export interface ReferencePoint {
+  chars: number;
+  words: number;
+  credits: number;
+  durationMs: number;
+  revisions: number;
+  corrections: number;
+}
+
 export interface CatalogResponse {
   /** False on a self-hosted or local deploy: everything is free and the paywall is off. */
   enabled: boolean;
   charsPerCredit: number;
   maxCreditsPerJob: number;
+  signupGrantCredits: number;
   skus: PricedSku[];
   credits: number | null;
+  reference: ReferencePoint[];
+  charsPerWord: number;
 }
 
 export interface BillingSummary {

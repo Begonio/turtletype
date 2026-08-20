@@ -103,6 +103,39 @@ describe(
       assert.equal(await balanceOf(userId), 0);
     });
 
+    it('credits a delayed payment when it finally settles', async () => {
+      // Some payment methods settle after Checkout returns, so the first event
+      // correctly declines to pay out and a later one carries the real result.
+      // Without the async event the customer is charged and never credited.
+      await handleEvent(
+        event(
+          'checkout.session.completed',
+          checkoutSession({ payment_status: 'unpaid' }),
+          `evt_async_a_${unique}`,
+        ),
+      );
+      assert.equal(await balanceOf(userId), 0);
+
+      await handleEvent(
+        event(
+          'checkout.session.async_payment_succeeded',
+          checkoutSession({ payment_status: 'paid' }),
+          `evt_async_b_${unique}`,
+        ),
+      );
+      assert.equal(await balanceOf(userId), 15);
+    });
+
+    it('does not credit twice when both checkout events report paid', async () => {
+      await handleEvent(
+        event('checkout.session.completed', checkoutSession(), `evt_both_a_${unique}`),
+      );
+      await handleEvent(
+        event('checkout.session.async_payment_succeeded', checkoutSession(), `evt_both_b_${unique}`),
+      );
+      assert.equal(await balanceOf(userId), 15);
+    });
+
     it('ignores a session with no account attached to it', async () => {
       await handleEvent(
         event('checkout.session.completed', checkoutSession({ client_reference_id: null })),

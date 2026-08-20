@@ -5,6 +5,9 @@ import { closePool, pool } from './pool.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
+/** Arbitrary but fixed: any two migrations must pick the same number to queue on. */
+const MIGRATION_LOCK_ID = 8_270_113;
+
 /**
  * Applies schema.sql. Every statement in it is idempotent, so this doubles as
  * both the initial migration and a safe no-op on every subsequent boot.
@@ -32,6 +35,11 @@ export async function migrate(): Promise<void> {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    // Serialise concurrent migrations. Two containers booting at once — which
+    // a rolling deploy does by definition — would otherwise run the DDL
+    // against each other. The lock is transaction-scoped, so it releases on
+    // COMMIT or ROLLBACK without any cleanup path to forget.
+    await client.query('SELECT pg_advisory_xact_lock($1)', [MIGRATION_LOCK_ID]);
     await client.query(sql);
     await client.query('COMMIT');
   } catch (err) {

@@ -38,6 +38,9 @@ Monorepo, npm workspaces, `server/` + `client/`, TypeScript throughout, ESM.
 - Credits: 1 credit = 10,000 chars, priced per job and charged on submission
 - `credit_ledger` is the source of truth; `users.credits` is a cache of it
 - Off entirely unless both `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` are set
+- Dashboard setup, webhook events and the go-live path: `docs/stripe-setup.md`
+- `npm run stripe:verify -w server` checks Stripe's real prices against the catalog's cached `amountCents` — nothing at runtime compares them, so a drift would silently bill a different figure than the page shows
+- Pricing-page figures come from `whatYouGet.ts`, which runs the real planner — never hardcode a duration or revision count into copy
 
 **Deploy**
 - Multi-stage Dockerfile (tini, non-root user, healthcheck)
@@ -56,6 +59,7 @@ Monorepo, npm workspaces, `server/` + `client/`, TypeScript throughout, ESM.
 - **Credit moves and the ledger row explaining them are written in one transaction.** `users.credits` is a cache of `SUM(credit_ledger.delta)`; `reconcile()` proves they agree. Charging for a job and creating the job row are likewise one transaction.
 - **Billing operations are idempotent via the unique index on `(reason, reference)`**, never via a check-then-act. The index is global, not per-user, so one Stripe session cannot credit two accounts. Idempotency keys are the *payment object* (Checkout session, invoice), not the event id — Stripe emits several events per payment.
 - **Lock the user row before inserting anything that references it.** `INSERT INTO jobs` takes a KEY SHARE lock on `users` for the FK; taking `FOR UPDATE` afterwards is a lock upgrade and two concurrent submissions deadlock. `lockUserCredits` must come first. There is a test for this.
+- **Migrations must stay true no-ops on re-run.** `schema.sql` runs on every boot. A `DROP CONSTRAINT`/`ADD CONSTRAINT` pair looks idempotent but takes ACCESS EXCLUSIVE on the table and re-validates every row each time — concurrently with live row locks, that deadlocks. Guard DDL with `IF NOT EXISTS` or a `pg_constraint` check, and note `migrate()` takes an advisory lock so overlapping deploys queue.
 - **The Stripe webhook route mounts before `express.json`** and takes the raw body — signature verification needs the exact bytes Stripe signed.
 - **Webhooks are the only place credit is created.** A Checkout success URL is just a URL a user can open.
 - **`config.ts` keeps secrets behind getters** so pure modules can be imported in tests without a live database.
