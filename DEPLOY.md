@@ -83,6 +83,11 @@ login only helps if you hit anonymous pull rate limits.)
    CLIENT_URL=https://type.turtlegames.org
    TRUST_PROXY=1
 
+   # Optional. Enables the Google Picker on the "use an existing doc" option;
+   # without it that option asks for a pasted link instead. Browser API key
+   # from the same Cloud project, restricted to the Picker API and this domain.
+   GOOGLE_PICKER_API_KEY=<AIza… from Google Cloud Console>
+
    # Required in production — see the note below
    STRIPE_SECRET_KEY=<sk_live_… from Stripe>
    STRIPE_WEBHOOK_SECRET=<whsec_… from the webhook endpoint you create>

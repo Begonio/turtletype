@@ -38,6 +38,9 @@ services:
       DATABASE_URL: postgres://${POSTGRES_USER:-turtletype}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-turtletype}?sslmode=disable
       SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:?set GOOGLE_CLIENT_ID in .env}
+      # Optional: enables the Google Picker. Unset, the existing-doc option
+      # asks for a pasted link, which is how the app worked before it existed.
+      GOOGLE_PICKER_API_KEY: ${GOOGLE_PICKER_API_KEY:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:?set GOOGLE_CLIENT_SECRET in .env}
       GOOGLE_CALLBACK_URL: https://${APP_DOMAIN:?set APP_DOMAIN in .env}/auth/google/callback
       CLIENT_URL: https://${APP_DOMAIN}

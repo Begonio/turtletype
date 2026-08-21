@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import dotenv from 'dotenv';
+import { resolvePickerConfig, type PickerSettings } from './auth/pickerConfig.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -124,6 +125,23 @@ export const config = {
       'email',
       'profile',
       'https://www.googleapis.com/auth/documents',
+      /**
+       * Per-file access, so the Google Picker can hand the app a document the
+       * user chose from their own Drive.
+       *
+       * Non-sensitive and, in Google's words, recommended — it adds nothing to
+       * the verification review, which is exactly why the picker is built on
+       * it rather than on a Drive listing call. `drive.readonly` and
+       * `drive.metadata.readonly` would let the app render its own list of the
+       * user's documents, but both are **restricted** scopes and would drag a
+       * third-party CASA security assessment, repeated annually, into the
+       * submission.
+       *
+       * Optional in practice: a user who unticks it can still paste a link, so
+       * unlike the documents scope this one never blocks sign-in — see
+       * `grantedDocumentsAccess`, which deliberately does not check for it.
+       */
+      'https://www.googleapis.com/auth/drive.file',
     ],
     /**
      * Whether Google has finished verifying the OAuth app.
@@ -146,6 +164,20 @@ export const config = {
      * touching Google.
      */
     docsRootUrl: process.env.GOOGLE_DOCS_ROOT_URL,
+    /**
+     * Google Picker settings, served to the browser at runtime.
+     *
+     * `GOOGLE_PICKER_API_KEY` is a browser API key from the same Cloud project
+     * — it is public by design, restricted by HTTP referrer rather than kept
+     * secret. Leave it unset and the picker button simply does not appear.
+     */
+    get picker(): PickerSettings {
+      return resolvePickerConfig({
+        clientId: process.env.GOOGLE_CLIENT_ID,
+        apiKey: process.env.GOOGLE_PICKER_API_KEY,
+        appId: process.env.GOOGLE_PICKER_APP_ID,
+      });
+    },
   },
 
   jobs: {

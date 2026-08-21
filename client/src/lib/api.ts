@@ -153,6 +153,21 @@ export interface PublicConfig {
    * says so first.
    */
   oauthVerified: boolean;
+  /**
+   * What the browser needs to open the Google Picker. Public values — the
+   * Picker runs client-side and Google requires them there — served rather
+   * than compiled in, so changing the API key does not mean rebuilding the
+   * bundle inside the Docker image.
+   *
+   * `enabled` is false on a deploy with no Picker API key configured, and the
+   * app falls back to the paste-a-link field it has always had.
+   */
+  picker: {
+    enabled: boolean;
+    clientId: string;
+    apiKey: string;
+    appId: string;
+  };
 }
 
 export interface JobSnapshot {

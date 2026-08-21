@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { isActive, useJobStore } from '../store/useJobStore';
 import { durationToSlider, formatDuration, formatFinishTime, sliderToDuration } from '../lib/format';
@@ -11,6 +12,10 @@ export default function Controls() {
   const estimating = useJobStore((state) => state.estimating);
   const docMode = useJobStore((state) => state.docMode);
   const docUrlInput = useJobStore((state) => state.docUrlInput);
+  const selectedDoc = useJobStore((state) => state.selectedDoc);
+  const pickerAvailable = useJobStore((state) => state.pickerAvailable);
+  const pickerBusy = useJobStore((state) => state.pickerBusy);
+  const pickerError = useJobStore((state) => state.pickerError);
   const text = useJobStore((state) => state.text);
   const phase = useJobStore((state) => state.phase);
   const error = useJobStore((state) => state.error);
@@ -22,10 +27,18 @@ export default function Controls() {
   const setDurationMs = useJobStore((state) => state.setDurationMs);
   const setDocMode = useJobStore((state) => state.setDocMode);
   const setDocUrlInput = useJobStore((state) => state.setDocUrlInput);
+  const chooseDoc = useJobStore((state) => state.chooseDoc);
+  const clearSelectedDoc = useJobStore((state) => state.clearSelectedDoc);
   const startJob = useJobStore((state) => state.startJob);
 
+  // Revealed on request when the picker is available, and the only option
+  // when it is not. Starts open if a link survived a page refresh, and is
+  // forced open by a picker failure — the fallback is no use to someone if
+  // they have to find it themselves after the thing they clicked broke.
+  const [showPasteField, setShowPasteField] = useState(() => docUrlInput.trim().length > 0);
+
   const locked = isActive(phase);
-  const missingDoc = docMode === 'existing' && !docUrlInput.trim();
+  const missingDoc = docMode === 'existing' && !selectedDoc && !docUrlInput.trim();
   const hasEstimate = minDurationMs > 0;
   // Priced but unaffordable. The server decides for real; this only avoids
   // sending a request that is already known to be refused.
@@ -138,17 +151,83 @@ export default function Controls() {
 
         {docMode === 'existing' ? (
           <div className="mt-3">
-            <input
-              type="text"
-              value={docUrlInput}
-              onChange={(event) => setDocUrlInput(event.target.value)}
-              placeholder="https://docs.google.com/document/d/…"
-              aria-label="Google Doc URL"
-              className="w-full rounded-lg border border-ink-700 bg-ink-850 px-3 py-2.5 font-mono text-xs text-ink-200 placeholder:text-ink-600 focus:border-accent-600/60 focus:outline-none"
-            />
+            {pickerAvailable ? (
+              selectedDoc ? (
+                <div className="rounded-lg border border-accent-600/40 bg-accent-600/10 px-3 py-2.5">
+                  <p className="truncate text-sm text-ink-200" title={selectedDoc.name}>
+                    {selectedDoc.name}
+                  </p>
+                  <div className="mt-2 flex items-center gap-3 font-mono text-[10px]">
+                    <button
+                      type="button"
+                      onClick={() => void chooseDoc()}
+                      disabled={pickerBusy}
+                      className="text-accent-400 underline underline-offset-2 transition hover:text-accent-300 disabled:opacity-50"
+                    >
+                      {pickerBusy ? 'opening…' : 'change'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={clearSelectedDoc}
+                      className="text-ink-400 underline underline-offset-2 transition hover:text-ink-200"
+                    >
+                      clear
+                    </button>
+                    <a
+                      href={selectedDoc.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="ml-auto text-ink-400 underline underline-offset-2 transition hover:text-ink-200"
+                    >
+                      open ↗
+                    </a>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => void chooseDoc()}
+                  disabled={pickerBusy}
+                  className="w-full rounded-lg border border-ink-700 bg-ink-850 px-3 py-2.5 text-sm text-ink-200 transition hover:border-accent-600/60 hover:text-accent-400 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {pickerBusy ? 'Opening Google…' : 'Choose from your Google Docs'}
+                </button>
+              )
+            ) : null}
+
+            {/* The link field never goes away entirely. The picker depends on
+                a Google popup, third-party scripts and a permission the user
+                can decline, and none of those are things this panel should be
+                able to strand someone behind. */}
+            {!pickerAvailable || showPasteField || pickerError ? (
+              <input
+                type="text"
+                value={docUrlInput}
+                onChange={(event) => setDocUrlInput(event.target.value)}
+                placeholder="https://docs.google.com/document/d/…"
+                aria-label="Google Doc URL"
+                className={`w-full rounded-lg border border-ink-700 bg-ink-850 px-3 py-2.5 font-mono text-xs text-ink-200 placeholder:text-ink-600 focus:border-accent-600/60 focus:outline-none ${
+                  pickerAvailable ? 'mt-2' : ''
+                }`}
+              />
+            ) : (
+              <button
+                type="button"
+                onClick={() => setShowPasteField(true)}
+                className="mt-2 font-mono text-[10px] text-ink-400 underline underline-offset-2 transition hover:text-ink-200"
+              >
+                or paste a link instead
+              </button>
+            )}
+
+            {pickerError ? (
+              <p className="mt-2 text-xs leading-relaxed text-amber-300">{pickerError}</p>
+            ) : null}
+
             <p className="mt-2 text-xs leading-relaxed text-ink-400">
-              Text is appended to the end of the document. Paste the full URL or just the document
-              ID.
+              {pickerAvailable
+                ? 'Text is appended to the end of the document you pick — nothing already in it is changed.'
+                : 'Text is appended to the end of the document. Paste the full URL or just the document ID.'}
             </p>
           </div>
         ) : null}
@@ -199,7 +278,9 @@ export default function Controls() {
       </button>
 
       {missingDoc && !locked ? (
-        <p className="-mt-4 text-xs text-ink-400">Paste a Google Doc link to continue.</p>
+        <p className="-mt-4 text-xs text-ink-400">
+          {pickerAvailable ? 'Choose a Google Doc to continue.' : 'Paste a Google Doc link to continue.'}
+        </p>
       ) : null}
     </aside>
   );

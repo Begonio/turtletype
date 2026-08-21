@@ -117,6 +117,28 @@ compatibility test in step 1 was never run. Verification costs waiting; the
 switch costs a rewrite of the existing-doc flow plus forcing every current user
 to re-consent.
 
+**Update (August 2026): step 3 is done.** The Picker was built anyway, as a
+usability change rather than a scope change — pasting a URL was the worst step
+in the flow. `drive.file` is now requested alongside `documents`, the Picker is
+the default way to choose an existing document, and pasting a link remains as
+the fallback. That moves the balance of the argument above without settling it:
+
+- The expensive half of the migration is now paid for. What is left is step 1
+  (the ten-minute test that `documents.get` and `documents.batchUpdate` accept
+  a `drive.file` grant on a picked file) and step 4 (re-consent).
+- What switching would now cost is the pasted-link path itself, which would
+  have to be deleted rather than kept as a fallback — under `drive.file` a
+  pasted URL resolves to a file the app has no grant for, and the failure is a
+  404 the user cannot act on.
+- So the decision is no longer "build a Picker or wait for review". It is
+  "keep the pasted-link path, or drop it and stop needing verification at all".
+
+**Run step 1 before you submit.** If `drive.file` turns out to cover the Docs
+calls, dropping `documents` is a config change plus deleting a text input, and
+it ends the review, the annual re-review and the 100-user cap in one move. That
+is worth ten minutes of certainty even if you then decide to keep the paste
+field.
+
 **This remains the fallback.** If review comes back with change requests you do
 not want to meet, or drags past what the launch can absorb, step 1 is still ten
 minutes and the escape hatch is still open.
@@ -182,7 +204,7 @@ annually, and letting that lapse drops you back behind the cap — and back to
 
 ### What to enter in the Scopes step
 
-The app requests exactly four scopes (`server/src/config.ts`), and the consent
+The app requests exactly five scopes (`server/src/config.ts`), and the consent
 screen should list exactly these — no more:
 
 | Scope | Sensitivity | Why |
@@ -190,18 +212,25 @@ screen should list exactly these — no more:
 | `openid` | Non-sensitive | Sign-in |
 | `https://www.googleapis.com/auth/userinfo.email` | Non-sensitive | Account identity, billing receipts |
 | `https://www.googleapis.com/auth/userinfo.profile` | Non-sensitive | Name and avatar in the UI |
+| `https://www.googleapis.com/auth/drive.file` | Non-sensitive | The Google Picker, so a user can choose a document instead of pasting its URL |
 | `https://www.googleapis.com/auth/documents` | **Sensitive** | The whole product |
 
-Passport sends the middle two as the `email` and `profile` shorthands, which is
-why the console shows them under their full `userinfo.*` names. Only the last
-row triggers verification, and it is the only one with a justification field.
+Passport sends the second and third as the `email` and `profile` shorthands,
+which is why the console shows them under their full `userinfo.*` names. Only
+the last row triggers verification, and it is the only one with a justification
+field — `drive.file` is the scope Google explicitly recommends and adds nothing
+to the review.
 
-**Add nothing else.** The temptation is to add a Drive scope "in case", and it
-is an expensive mistake: `drive`, `drive.readonly` and friends are
-**restricted**, not merely sensitive, and restricted scopes require a
-third-party CASA security assessment on top of the review — a different order
-of cost and delay. Nothing in this codebase needs one. All three Docs calls it
-makes are covered by `documents` alone:
+**Add no *other* Drive scope.** The temptation, once a picker exists, is to
+render your own list of the user's documents by calling `files.list`. That
+needs `drive`, `drive.readonly`, `drive.metadata` or `drive.metadata.readonly`,
+and all four are **restricted**, not merely sensitive: restricted scopes
+require a third-party CASA security assessment on top of the review, plus an
+annual re-assessment — a different order of cost and delay. The Google Picker
+exists precisely to avoid that trade, because it browses using the user's own
+Google session and hands back only the file they clicked. Nothing in this
+codebase needs a restricted scope. All three Docs calls it makes are covered by
+`documents` alone:
 
 - `documents.create` — the new-document path (`docs/documents.ts`)
 - `documents.get` — reading the document's length so text appends at the right
@@ -218,6 +247,13 @@ without the other fails in a way that does not mention the other. If the
 **Google Docs API** is not enabled under *APIs & Services → Library*, every job
 fails with `403 SERVICE_DISABLED` no matter how the consent screen is
 configured. Check it before blaming scopes.
+
+The same applies to the **Google Picker API**, which is a separate library
+entry again. The Picker additionally needs a browser API key in
+`GOOGLE_PICKER_API_KEY` — restrict it to the Picker API and to your own domain
+as an HTTP referrer. Leave the key unset and the picker button does not render
+at all; the existing-document option falls back to a pasted link, which is the
+behaviour to expect on a self-hosted deploy that has not done this setup.
 
 ### Homepage requirements
 
@@ -288,17 +324,28 @@ The field the review turns on. Paste this, adjusting only the operator name:
 >
 > A narrower scope is not sufficient for our core use case. Most of our users
 > want the text written into a document that already exists — an assignment
-> template, a shared draft — which they identify to us by pasting its URL.
+> template, a shared draft — and they identify it to us in one of two ways. We
+> offer the Google Picker (and request `drive.file` for it) so that users who
+> are browsing their own Drive never have to hand us broader access than the
+> file they chose. But a large share of our users arrive holding a link
+> somebody sent them, and pasting that link is the path they expect;
 > `drive.file` grants access only to files our app created or that were passed
-> through the Google Picker, so it cannot reach a document identified by link,
-> which is the primary flow.
+> through the Picker, so it cannot reach a document identified by URL alone.
+> `documents` is what covers that second path.
 
 That last paragraph is the one reviewers actually weigh — they ask why
-`drive.file` will not do, and "we did not want to build a Picker" is not an
-answer. The reason given above is true of the product as it stands: the
-existing-document path is a pasted URL. If you later build the Picker, this
-justification stops being true, and at that point you should be switching
-scopes rather than defending this one.
+`drive.file` will not do.
+
+**Read this before you submit.** An earlier version of this document said the
+answer was "the existing-document path is a pasted URL, and we have no Picker".
+The Picker now exists (`client/src/lib/googlePicker.ts`), so that answer is no
+longer available and the paragraph above has been rewritten to the argument
+that survives: the pasted-link path is still there, users still use it, and
+`drive.file` genuinely cannot serve it.
+
+Be clear-eyed that this is a weaker position than before. A reviewer may
+reasonably ask why the Picker is not simply the only way in, and if they do,
+you have a real decision rather than a rebuttal — see below.
 
 Everything else above is verifiable against the code, which is what makes it
 worth saying: the text never reaches Postgres (`jobs` stores `doc_id`,
@@ -324,7 +371,11 @@ only, with narration. Keep the browser URL bar visible throughout.
 5. **Paste text** into the composer.
 6. **Choose the existing-document option and paste a Google Docs URL.** This is
    the step that justifies the scope over `drive.file` — do not skip it and do
-   not use the create-new-document path here.
+   not use the create-new-document path here. Show the Picker first if you
+   like, then clear it and paste a link, narrating why both exist: *"I can pick
+   a document I own, but the one my tutor shared with me I only have as a
+   link."* The pasted link is the part the scope rests on, so it has to be the
+   part that ends up on camera writing text into a document.
 7. **Start the job.** Show the progress panel and the cost in credits.
 8. **Switch to the Google Doc** in another tab and show the text arriving.
 9. **Show the document's version history** (File → Version history) with

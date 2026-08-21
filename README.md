@@ -263,6 +263,8 @@ Without `DATABASE_URL` those tests skip automatically.
 | `GOOGLE_CLIENT_ID`     | yes      | OAuth client ID.                                               |
 | `GOOGLE_CLIENT_SECRET` | yes      | OAuth client secret.                                           |
 | `GOOGLE_CALLBACK_URL`  | yes      | Must exactly match an authorised redirect URI.                 |
+| `GOOGLE_PICKER_API_KEY` | no      | Browser API key for the Google Picker. Unset: the existing-doc option falls back to pasting a link. |
+| `GOOGLE_PICKER_APP_ID` | no       | Cloud project number. Defaults to the numeric prefix of the client ID. |
 | `SESSION_SECRET`       | yes      | Signs session cookies. `openssl rand -hex 32`.                 |
 | `DATABASE_URL`         | yes      | Postgres connection string.                                    |
 | `PORT`                 | no       | API port. Default `8080`.                                      |

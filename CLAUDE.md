@@ -4,7 +4,7 @@ Writes text into a Google Doc the way a human would type it, instead of pasting.
 
 ## Flow
 
-1. User signs in with Google, pastes text, picks a target duration, points it at a doc ID.
+1. User signs in with Google, pastes text, picks a target duration, and points it at a doc — chosen through the Google Picker, or by pasting a link.
 2. Server plans the whole session upfront in memory: an event sequence of per-character delays, thinking pauses, typos, and deferred corrections.
 3. Types in bursts of ~55-150 characters separated by 150+ second rests (deliberately above the Docs checkpoint interval, so each burst becomes its own revision).
 4. Writes about a third of those bursts "laboured" — one long stall mid-burst, so the burst runs past a checkpoint and a revision lands mid-sentence. The rest go down in flow, twenty seconds each.
@@ -19,7 +19,7 @@ Monorepo, npm workspaces, `server/` + `client/`, TypeScript throughout, ESM.
 
 **Backend (`server/`)**
 - Node.js + Express
-- Passport + `passport-google-oauth20` (scopes: openid, email, profile, `documents`)
+- Passport + `passport-google-oauth20` (scopes: openid, email, profile, `documents`, `drive.file`)
 - `express-session` + `connect-pg-simple`
 - PostgreSQL via `pg` — users, tokens, jobs
 - Google Docs REST API v1 called directly with `fetch` (base URL is env-configurable for integration tests against a fake Docs server)
@@ -32,6 +32,7 @@ Monorepo, npm workspaces, `server/` + `client/`, TypeScript throughout, ESM.
 - Tailwind CSS
 - React Router
 - `EventSource` for the SSE stream
+- Google Picker (`lib/googlePicker.ts`) for choosing an existing doc
 
 **Billing (`server/src/billing/`)**
 - Stripe Checkout (packs + one subscription) and the hosted billing portal
@@ -73,6 +74,8 @@ Monorepo, npm workspaces, `server/` + `client/`, TypeScript throughout, ESM.
 - **`launchChecks.ts` is pure** — it reads an env object passed to it, never `process.env` directly, so the launch rules are testable without an environment. Same discipline as `humanize.ts`.
 - **The displayed app name must read exactly `TurtleType`.** It has to match the OAuth consent screen — Google's homepage review rejected a lowercase `turtletype` wordmark as a mismatch. `components/Wordmark.tsx` is the single source; don't restyle it to lowercase or swap it for an image.
 - **The homepage must not redirect signed-in visitors.** It used to bounce them to `/app`, which hid it from the one person who has to read it: a verification reviewer, who signs in to test and then goes back to the homepage. Review also requires the homepage to describe the app's functionality and explain each Google permission in visible copy, not small print — see `docs/google-oauth-verification.md`.
+- **A doc picker must never need a Drive *listing* scope.** Rendering our own list of the user's documents means `files.list`, which needs `drive`, `drive.readonly`, `drive.metadata` or `drive.metadata.readonly` — all four are **restricted**, so they require a third-party CASA security assessment plus annual re-assessment before verification can pass. The Google Picker browses using the user's own Google session and returns only the file they clicked, so `drive.file` (non-sensitive, adds nothing to review) is enough. If a future change wants search, filters or a custom list, that is the trade being made — say so out loud.
+- **Picker settings are served, not compiled in.** `GOOGLE_PICKER_API_KEY` and the derived app ID come from `GET /api/public-config`, not `VITE_` variables, for the same reason as the legal identity: the client bundle is built inside the Dockerfile, so anything baked into it costs a rebuild to change. Unset key means `picker.enabled` is false, the button does not render, and the paste-a-link field is the whole existing-doc path — degraded, not broken. Keep that fallback: the picker depends on third-party scripts, a popup, and a permission the user can decline.
 - **Operator identity lives in env, not in the client bundle.** `/privacy` and `/terms` read `LEGAL_OPERATOR`, `SUPPORT_EMAIL`, `LEGAL_JURISDICTION` from `GET /api/legal` at runtime. Google's OAuth review commonly asks for a correction here, and every round trip restarts their clock — a variable change beats a redeploy. An unset jurisdiction renders a visible notice rather than an invented one; don't replace it with a plausible default.
 - **`preflight.ts` must stay the first import in `index.ts`.** It validates env before `db/pool.ts` reads it at module load. Reordering imports can silently break env validation.
 - **Regenerate `package-lock.json` whenever `package.json` changes.** A rename passed locally and failed on Railway's `npm ci`, because local dev reuses `node_modules` and never revalidates the lockfile.
@@ -107,6 +110,15 @@ temporary state outlives the state unless something removes it.
 `docs/google-oauth-verification.md` holds the submission checklist, the scope
 justification text, and the demo-video shot list.
 `docs/go-live.md` is the wider launch sequence (identity → billing → OAuth).
+
+**The Picker changed the scope argument (August 2026).** The justification used
+to read "the existing-doc path is a pasted URL and we have no Picker". There is
+a Picker now, so it rests instead on the pasted-link path, which remains because
+`drive.file` cannot reach a document identified by URL alone. That is a weaker
+position, and it makes the ten-minute `drive.file` compatibility test in
+`docs/google-oauth-verification.md` worth running before submitting: the
+expensive half of a full migration is already built, so dropping `documents`
+entirely is now mostly a matter of deleting the paste field.
 
 The scope justification tells reviewers document content is never stored — that
 is true today (`jobs` holds `doc_id`, `total_chars` and status, never text) and
