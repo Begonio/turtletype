@@ -114,17 +114,54 @@ export const config = {
       return required('GOOGLE_CALLBACK_URL');
     },
     /**
-     * The permission the app cannot work without. Google shows sensitive
-     * scopes as a checkbox the user has to tick, and there is no way to
-     * pre-select it, so sign-in has to cope with it being declined.
+     * The permission the app cannot work without.
+     *
+     * `drive.file` is per-file: it reaches documents this app created, plus
+     * documents the user hands it through the Google Picker. It replaced
+     * `auth/documents` — read and write over every document the account owns —
+     * in August 2026, when Google's OAuth review refused the broader scope
+     * under the minimum-scope rule. See docs/google-oauth-verification.md.
+     *
+     * Two consequences worth keeping in mind before touching anything here:
+     * the Docs API accepts this scope for `documents.create`, `documents.get`
+     * and `documents.batchUpdate` (all three calls this app makes), and a
+     * document identified only by a pasted URL is *not* reachable — it has to
+     * go through the Picker first. `routes/picker.ts` is what makes that
+     * possible; removing it does not narrow the app, it breaks it.
+     *
+     * Google shows Drive scopes as a checkbox the user has to tick, and there
+     * is no way to pre-select it, so sign-in still has to cope with it being
+     * declined.
      */
-    documentsScope: 'https://www.googleapis.com/auth/documents',
+    docsAccessScope: 'https://www.googleapis.com/auth/drive.file',
     scopes: [
       'openid',
       'email',
       'profile',
-      'https://www.googleapis.com/auth/documents',
+      'https://www.googleapis.com/auth/drive.file',
     ],
+    /**
+     * Browser API key for the Google Picker, from the same Cloud project.
+     *
+     * The Picker runs in the user's browser and authenticates with an API key
+     * rather than the OAuth client secret, so this one is public by design —
+     * restrict it by HTTP referrer in the Cloud Console, not by hiding it.
+     *
+     * Empty means the "use an existing document" path is unavailable: under
+     * `drive.file` there is no way to reach a document the user has not handed
+     * over, so the app says so rather than failing at job start.
+     */
+    get pickerApiKey(): string {
+      return process.env.GOOGLE_PICKER_API_KEY?.trim() ?? '';
+    },
+    /**
+     * The Cloud project number (not the project ID). The Picker needs it to
+     * name the app that is being granted access, and to show files on shared
+     * drives. Optional: the Picker works without it for My Drive.
+     */
+    get projectNumber(): string {
+      return process.env.GOOGLE_PROJECT_NUMBER?.trim() ?? '';
+    },
     /**
      * Whether Google has finished verifying the OAuth app.
      *

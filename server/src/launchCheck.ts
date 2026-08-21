@@ -14,7 +14,7 @@
  */
 import { referencePoints } from './billing/whatYouGet.js';
 import { config } from './config.js';
-import { launchReport, legalReport, type LaunchProblem } from './launchChecks.js';
+import { googleReport, launchReport, legalReport, type LaunchProblem } from './launchChecks.js';
 
 function print(label: string, problems: LaunchProblem[]): void {
   for (const problem of problems) {
@@ -28,6 +28,7 @@ function main(): void {
   // pass everything.
   const { errors, warnings } = launchReport(process.env, { isProduction: true });
   const legal = legalReport(process.env);
+  const google = googleReport(process.env);
 
   console.log('TurtleType launch check\n');
   console.log(`  environment      ${config.nodeEnv}`);
@@ -49,9 +50,13 @@ function main(): void {
   console.log(`  operator         ${config.legal.operator}`);
   console.log(`  support email    ${config.legal.contactEmail}`);
   console.log(`  jurisdiction     ${config.legal.jurisdiction || '(unset)'}`);
+  console.log(`  docs scope       ${config.google.docsAccessScope}`);
+  console.log(
+    `  drive picker     ${config.google.pickerApiKey ? 'configured' : 'MISSING KEY — existing-doc path is off'}`,
+  );
   console.log('');
 
-  const failures = [...errors, ...legal];
+  const failures = [...errors, ...legal, ...google];
   if (failures.length === 0 && warnings.length === 0) {
     console.log('All checks passed. Remaining steps are manual — see docs/go-live.md.');
     return;

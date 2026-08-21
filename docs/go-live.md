@@ -105,48 +105,55 @@ trial cost more than it converts.
 ## 3. Get out of Testing on Google
 
 Full detail in [`google-oauth-verification.md`](google-oauth-verification.md),
-including the exact scope justification and demo-video script.
+including the reply Google's Trust and Safety team is waiting on.
 
-**Do this first, before the checklist below:** switch the consent screen to
-**In production**. It is a separate setting from verification and you do not
-have to wait for review to use it. In Testing, grants expire after 7 days —
-which for a product whose jobs run for hours and whose users come back is not
-an inconvenience but a defect. Production removes that. It does *not* remove
-the "Google hasn't verified this app" warning or the user cap: unverified in
-production still shows the warning and allows 100 new users over the lifetime
-of the project, non-resettable. Treat those 100 as your runway and submit
-verification the same week you start charging.
+**This step got much shorter in August 2026.** Verification review refused
+`auth/documents` under the minimum-scope rule and recommended `drive.file`; the
+app now requests `drive.file`, which Google classifies as **non-sensitive**.
+Non-sensitive scopes need no verification, carry no 100-user cap, and show no
+"Google hasn't verified this app" warning. What was weeks of waiting is now a
+console checklist.
 
-Then, in submission order:
+**Do this first:** switch the consent screen to **In production**. It is a
+separate setting and you do not have to wait for anything to use it. In
+Testing, grants expire after 7 days — which for a product whose jobs run for
+hours and whose users come back is not an inconvenience but a defect.
 
+Then, in order:
+
+- [ ] **Enable the Google Picker API** under *APIs & Services → Library*,
+      alongside the Docs API. Without it, the "use an existing document" path
+      cannot work at all: under `drive.file` a pasted link grants nothing, and
+      the picker is the only way a user can hand a document over.
+- [ ] **Create a browser API key**, restricted by HTTP referrer to
+      `type.turtlegames.org`, and set `GOOGLE_PICKER_API_KEY` and
+      `GOOGLE_PROJECT_NUMBER` on the deploy. `npm run launch:check -w server`
+      now fails without them.
+- [ ] **Add `auth/drive.file` to the consent screen's scopes, and remove
+      `auth/documents`.** Removing the sensitive scope is what actually makes
+      the app non-sensitive — the code change alone does not.
+- [ ] **Reply to the Trust and Safety mail** with the "Confirming narrower
+      scopes" text from the verification doc. The request stays open until you
+      reply, whatever else you change.
 - [ ] **Verify `turtlegames.org` in Search Console** using the Google account
       that owns the Cloud project, then add it under *APIs & Services → OAuth
-      consent screen → Authorised domains*. Every URL you hand the reviewer
-      must sit on a verified domain.
+      consent screen → Authorised domains*.
 - [ ] **Confirm the legal pages render real values** — load
       `https://type.turtlegames.org/privacy` and `/terms` and check that no
       placeholder or amber "not configured" notice is showing. Step 1 above.
 - [ ] **Complete the consent screen**: app name, user-support email, 120×120
       PNG logo, homepage, privacy URL, terms URL, developer contact.
-- [ ] **Paste the scope justification** from the verification doc.
-- [ ] **Record the demo video** to the script in the verification doc. Unlisted
-      YouTube is fine.
-- [ ] **Switch publishing status to In production** and submit.
-- [ ] **Watch the developer contact inbox.** Replies go there and the clock
-      restarts on each round trip; the usual follow-up is a re-record of the
-      video showing something they could not see.
-- [ ] **When it is granted, set `OAUTH_APP_VERIFIED=true`.** That removes the
-      "Google will show a warning first" notice from the sign-in and pricing
-      pages. Nothing else reads the flag, so a forgotten one only means warning
-      people about a screen they will not see.
+- [ ] **Switch publishing status to In production.**
+- [ ] **Set `OAUTH_APP_VERIFIED=true`** once the sensitive scope is gone from
+      the consent screen. That removes the "Google will show a warning first"
+      notice from the sign-in and pricing pages — a warning about a screen
+      users will no longer meet. Nothing in the code can detect the console
+      change, so this one is by hand.
+- [ ] **Watch the developer contact inbox** until the thread is closed out.
 
-Expect a first response in several business days and the whole thing to take
-weeks. Sensitive-scope apps are re-reviewed annually — letting that lapse drops
-you back behind the 100-user cap, so put the renewal in a calendar now.
-
-While you wait, the cap still applies: up to 100 hand-added test users whose
-grants expire every 7 days. Paying customers cannot be onboarded past that
-number until verification lands, which is the real reason to start it early.
+Existing accounts granted the old scope, so each one is sent through consent
+once — the first time it opens the picker — and not again. Expect a handful of
+support questions in the week after the switch, and nothing after that.
 
 ---
 

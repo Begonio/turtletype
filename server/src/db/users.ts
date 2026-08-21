@@ -9,6 +9,8 @@ export interface UpsertUserInput {
   accessToken: string | null;
   refreshToken: string | null;
   tokenExpiry: Date | null;
+  /** Space-delimited scope list Google returned with the token. */
+  grantedScopes: string | null;
 }
 
 /**
@@ -20,8 +22,8 @@ export interface UpsertUserInput {
  */
 export async function upsertUser(input: UpsertUserInput): Promise<UserRow> {
   const { rows } = await query<UserRow>(
-    `INSERT INTO users (google_id, email, name, avatar_url, access_token, refresh_token, token_expiry)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
+    `INSERT INTO users (google_id, email, name, avatar_url, access_token, refresh_token, token_expiry, granted_scopes)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
      ON CONFLICT (google_id) DO UPDATE SET
        email         = EXCLUDED.email,
        name          = EXCLUDED.name,
@@ -29,6 +31,9 @@ export async function upsertUser(input: UpsertUserInput): Promise<UserRow> {
        access_token  = EXCLUDED.access_token,
        refresh_token = COALESCE(EXCLUDED.refresh_token, users.refresh_token),
        token_expiry  = EXCLUDED.token_expiry,
+       -- Overwritten, not merged: what this grant covers is what the
+       -- account has now, and a stale wider list would hide a migration.
+       granted_scopes = EXCLUDED.granted_scopes,
        updated_at    = NOW()
      RETURNING *`,
     [
@@ -39,6 +44,7 @@ export async function upsertUser(input: UpsertUserInput): Promise<UserRow> {
       input.accessToken,
       input.refreshToken,
       input.tokenExpiry,
+      input.grantedScopes,
     ],
   );
   const row = rows[0];

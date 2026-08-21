@@ -253,23 +253,33 @@ The OAuth client must know about the new domain or every sign-in fails with
    openid
    https://www.googleapis.com/auth/userinfo.email
    https://www.googleapis.com/auth/userinfo.profile
-   https://www.googleapis.com/auth/documents      <- the sensitive one
+   https://www.googleapis.com/auth/drive.file
    ```
 
-   Only the last needs justifying, and it is what verification reviews. Do not
-   add a Drive scope: those are *restricted* rather than sensitive and drag a
-   third-party CASA security assessment into the review. Nothing here needs
-   one — `documents` covers creating, reading and writing.
-4. **APIs & Services → Library →** confirm the **Google Docs API** is enabled.
-   This is separate from declaring the scope, and missing it fails every job
-   with `403 SERVICE_DISABLED` without ever mentioning the API.
+   All four are non-sensitive, which is the point: `drive.file` reaches only
+   documents the app created and documents the user hands over through the
+   Google Picker, so there is nothing to verify and no user cap. Do not "widen"
+   it to `drive` or `drive.readonly` — those are *restricted* rather than
+   sensitive and drag a third-party CASA security assessment, recertified
+   annually, into the picture. Nothing here needs one.
+4. **APIs & Services → Library →** confirm the **Google Docs API** and the
+   **Google Picker API** are both enabled. This is separate from declaring the
+   scope, and a missing Docs API fails every job with `403 SERVICE_DISABLED`
+   without ever mentioning the API; a missing Picker API kills the
+   existing-document path.
+5. **APIs & Services → Credentials → Create credentials → API key**, restricted
+   by HTTP referrer to your domain. Set it as `GOOGLE_PICKER_API_KEY`, and set
+   `GOOGLE_PROJECT_NUMBER` to the project number. `npm run launch:check -w
+   server` fails without them.
 
 ### The 7-day refresh token trap
 
 This one will bite you a week after launch if you skip it.
 
-`https://www.googleapis.com/auth/documents` is a **sensitive** scope. While your
-consent screen is in **Testing** status:
+It is a **Testing**-status problem rather than a scope problem — it bit this
+project while the app still requested the sensitive `auth/documents` scope, and
+publishing to production is what fixes it either way. While your consent screen
+is in **Testing** status:
 
 - only accounts on the test-user list can sign in at all, and
 - **refresh tokens expire after 7 days**, so every user has to re-consent weekly.
@@ -283,16 +293,18 @@ can do that today, before verification finishes — the two are separate setting
 and production removes the 7-day expiry on its own.
 
 What production does **not** remove is the "Google hasn't verified this app"
-warning, or the user cap. An unverified app in production still shows the
-warning and is limited to 100 new users over the lifetime of the project.
-Only verification lifts those, and it means providing a privacy policy URL, a
-terms URL, a homepage on `turtlegames.org`, and a demo video showing why the app
-needs Docs access. It takes weeks.
+warning, or the user cap — for an app that requests a **sensitive** scope. An
+unverified one in production still shows the warning and is limited to 100 new
+users over the lifetime of the project.
 
-So the order that costs you least is: publish to production now, submit for
-verification immediately, and treat the 100 users as a runway rather than a
-limit you will not reach. [`docs/google-oauth-verification.md`](docs/google-oauth-verification.md)
-has the full comparison and the submission checklist.
+**Requesting only `drive.file` sidesteps all of it.** Non-sensitive scopes need
+no verification, carry no cap, and show no warning screen — which is exactly
+why Google's review pushed this app off `auth/documents` in August 2026. Once
+the sensitive scope is gone from the consent screen, publish to production, set
+`OAUTH_APP_VERIFIED=true`, and there is nothing left to wait for.
+[`docs/google-oauth-verification.md`](docs/google-oauth-verification.md) has the
+migration, the console checklist and the reply that Google's Trust and Safety
+team is waiting on.
 
 If TurtleType is only ever for you and a handful of people, staying in Testing is
 fine — just expect the weekly re-consent.

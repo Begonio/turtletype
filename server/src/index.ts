@@ -21,6 +21,7 @@ import { jobQueue } from './jobs/queue.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { billingRouter, stripeWebhookRouter } from './routes/billing.js';
 import { jobsRouter } from './routes/jobs.js';
+import { pickerRouter } from './routes/picker.js';
 import { publicConfigRouter } from './routes/publicConfig.js';
 import { meRouter } from './routes/me.js';
 
@@ -99,6 +100,7 @@ export function createApp(): express.Express {
   app.use('/api', publicConfigRouter);
   app.use('/api', meRouter);
   app.use('/api', billingRouter);
+  app.use('/api', pickerRouter);
   app.use('/api', jobsRouter);
 
   // Single-service deploys: serve the built SPA from the same origin, which

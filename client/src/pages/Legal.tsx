@@ -132,10 +132,13 @@ export function Privacy() {
             or billing.
           </li>
           <li>
-            <span className="text-ink-200">Access to your Google Docs documents</span> — used
-            solely to write the text you submit into the document you choose, and to read that
-            document's current length so new text is appended in the right place. TurtleType does
-            not read, index, analyse, or store the contents of any document.
+            <span className="text-ink-200">Per-file access to the documents you choose</span> —
+            used solely to write the text you submit into that document, and to read its current
+            length so new text is appended in the right place. This permission
+            (<code className="font-mono text-xs text-ink-300">drive.file</code>) covers only
+            documents TurtleType created for you and documents you hand over through Google's file
+            picker; the rest of your Drive is not reachable by us at all. TurtleType does not read,
+            index, analyse, or store the contents of any document.
           </li>
           <li>
             <span className="text-ink-200">An offline refresh token</span> — required because a job

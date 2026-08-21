@@ -9,6 +9,11 @@ export interface UserRow {
   access_token: string | null;
   refresh_token: string | null;
   token_expiry: Date | null;
+  /**
+   * Space-delimited scopes Google reported at the last sign-in. NULL on rows
+   * created before the column existed, i.e. before the `drive.file` migration.
+   */
+  granted_scopes: string | null;
   stripe_customer_id: string | null;
   stripe_subscription_id: string | null;
   subscription_status: string;

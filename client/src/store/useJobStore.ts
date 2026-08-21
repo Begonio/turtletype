@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { ApiError, api, loginUrl, streamUrl, type CurrentUser, type JobStatus } from '../lib/api';
+import { openPicker, PickerUnavailableError, parseDocId, type PickedDoc } from '../lib/picker';
 
 export type Phase = 'idle' | 'starting' | JobStatus;
 export type DocMode = 'new' | 'existing';
@@ -43,6 +44,19 @@ interface JobStore {
   previewDropped: number;
   docMode: DocMode;
   docUrlInput: string;
+  /**
+   * The document the user handed over through the Google Picker.
+   *
+   * Under `drive.file` this is the only way an existing document becomes
+   * writable — the pasted link in `docUrlInput` is a navigation hint for the
+   * picker, never permission by itself. So a job in 'existing' mode is not
+   * startable until this is set.
+   */
+  pickedDoc: PickedDoc | null;
+  pickerBusy: boolean;
+  pickerError: string | null;
+  /** False when the deploy has no Picker API key, so the UI can say why. */
+  pickerAvailable: boolean;
 
   // -- live job --------------------------------------------------------
   jobId: string | null;
@@ -68,6 +82,9 @@ interface JobStore {
   refreshEstimate: () => void;
   setDocMode: (mode: DocMode) => void;
   setDocUrlInput: (value: string) => void;
+  /** Opens the Google Picker so Google can grant access to one document. */
+  chooseDoc: () => Promise<void>;
+  clearPickedDoc: () => void;
   startJob: () => Promise<void>;
   pauseJob: () => Promise<void>;
   resumeJob: () => Promise<void>;
@@ -146,6 +163,10 @@ export const useJobStore = create<JobStore>()(
       previewDropped: 0,
       docMode: 'new',
       docUrlInput: '',
+      pickedDoc: null,
+      pickerBusy: false,
+      pickerError: null,
+      pickerAvailable: true,
 
       jobId: null,
       docUrl: null,
@@ -253,12 +274,71 @@ export const useJobStore = create<JobStore>()(
         }, ESTIMATE_DEBOUNCE_MS);
       },
 
-      setDocMode: (docMode) => set({ docMode }),
-      setDocUrlInput: (docUrlInput) => set({ docUrlInput }),
+      setDocMode: (docMode) => set({ docMode, pickerError: null }),
+      /**
+       * Editing the link drops the picked document. Keeping it would leave the
+       * box showing one document while the job wrote into another, and the
+       * grant belongs to the document that was picked, not to the text here.
+       */
+      setDocUrlInput: (docUrlInput) => set({ docUrlInput, pickedDoc: null, pickerError: null }),
+
+      /**
+       * Hands the picker to Google and keeps whatever comes back.
+       *
+       * A link already in the box pre-navigates the picker to that file, so
+       * the habit of pasting a URL still works — it just ends in Google
+       * granting access to that one document rather than in this app assuming
+       * it has access it was never given.
+       */
+      async chooseDoc() {
+        if (get().pickerBusy) return;
+        set({ pickerBusy: true, pickerError: null });
+
+        try {
+          const session = await api.pickerSession();
+          if (!session.configured) {
+            set({ pickerAvailable: false });
+            throw new PickerUnavailableError(
+              'Choosing an existing document is unavailable on this deployment. ' +
+                'Create a new document instead.',
+            );
+          }
+          set({ pickerAvailable: true });
+
+          const hinted = parseDocId(get().docUrlInput);
+          const picked = await openPicker(session, hinted ? { fileIds: [hinted] } : {});
+          // Null means they closed it without choosing; leave everything as it was.
+          if (picked) set({ pickedDoc: picked, docUrlInput: picked.url });
+        } catch (error) {
+          // A grant that predates the drive.file migration cannot open a
+          // picker at all. One trip through consent fixes it permanently, so
+          // go there rather than showing an error nobody can act on.
+          if (error instanceof ApiError && error.code === 'REAUTH_REQUIRED') {
+            window.location.href = loginUrl('/app');
+            return;
+          }
+          set({
+            pickerError:
+              error instanceof PickerUnavailableError || error instanceof ApiError
+                ? error.message
+                : 'Could not open Google Drive. Please try again.',
+          });
+        } finally {
+          set({ pickerBusy: false });
+        }
+      },
+
+      clearPickedDoc: () => set({ pickedDoc: null, docUrlInput: '', pickerError: null }),
 
       async startJob() {
-        const { text, durationMs, docMode, docUrlInput } = get();
+        const { text, durationMs, docMode, pickedDoc } = get();
         if (!text.trim() || get().phase === 'starting') return;
+        // Belt and braces: the button is disabled without one, but sending a
+        // pasted ID under `drive.file` would only fail at the first write.
+        if (docMode === 'existing' && !pickedDoc) {
+          set({ pickerError: 'Choose the document from Google Drive first.' });
+          return;
+        }
 
         get().detachStream();
         set({
@@ -284,7 +364,9 @@ export const useJobStore = create<JobStore>()(
             text,
             // Omitted means "run at the natural minimum", which the server computes.
             ...(durationMs ? { durationMs } : {}),
-            ...(docMode === 'existing' && docUrlInput.trim() ? { docId: docUrlInput.trim() } : {}),
+            // Always the ID the picker returned — the one Google actually
+            // granted access to — never whatever is in the paste box.
+            ...(docMode === 'existing' && pickedDoc ? { docId: pickedDoc.id } : {}),
           });
 
           set((state) => ({
@@ -511,6 +593,9 @@ export const useJobStore = create<JobStore>()(
         durationMs: state.durationMs,
         docMode: state.docMode,
         docUrlInput: state.docUrlInput,
+        // The grant lives with Google and outlives the tab, so a picked
+        // document survives a refresh the same way the composer text does.
+        pickedDoc: state.pickedDoc,
         jobId: TERMINAL.includes(state.phase) ? null : state.jobId,
       }),
     },

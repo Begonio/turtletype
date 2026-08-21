@@ -5,12 +5,17 @@ import { api } from '../lib/api';
 /**
  * Warns people about the screen Google puts in front of them.
  *
- * Until verification completes, an app requesting a sensitive scope shows
- * "Google hasn't verified this app" before the consent screen, and the only
- * way forward is Advanced → Go to TurtleType (unsafe). Meeting that unprepared
- * reads as a malware warning, and it lands on the exact step where someone is
- * deciding whether to trust us with their documents and their card. Most people
- * who bail there never come back to find out it was procedural.
+ * An unverified app shows "Google hasn't verified this app" before the consent
+ * screen, and the only way forward is Advanced → Go to TurtleType (unsafe).
+ * Meeting that unprepared reads as a malware warning, and it lands on the exact
+ * step where someone is deciding whether to trust us with their documents and
+ * their card. Most people who bail there never come back to find out it was
+ * procedural.
+ *
+ * Since the move to `drive.file` — a non-sensitive scope — this screen should
+ * stop appearing once the Cloud project no longer requests a sensitive one.
+ * That is a console change, not a code change, which is exactly why this is a
+ * flag: flip `OAUTH_APP_VERIFIED` when it is done and the notice goes away.
  *
  * Rendered from `oauthVerified` rather than hardcoded, so it disappears on its
  * own the day verification lands — a notice about a temporary state outlives
@@ -44,15 +49,16 @@ export default function UnverifiedAppNotice({ className = '' }: { className?: st
       <p className="font-medium text-ink-200">Google will show a warning first</p>
       <p className="mt-2">
         You will see <span className="text-ink-300">“Google hasn’t verified this app”</span> before
-        the permission screen. That means Google has not finished reviewing our request for Docs
-        access — a queue that takes weeks — not that anything was found wrong. To continue, choose{' '}
+        the permission screen. That means Google has not finished reviewing our app — a queue that
+        takes weeks — not that anything was found wrong. To continue, choose{' '}
         <span className="text-ink-300">Advanced</span> →{' '}
         <span className="text-ink-300">Go to TurtleType (unsafe)</span>.
       </p>
       <p className="mt-2">
         What we do with that access does not change either way: we write the text you give us into
-        the document you choose, and read its length so the text lands in the right place. We never
-        open anything else, and your document text is never stored. The{' '}
+        the document you choose, and read its length so the text lands in the right place. The
+        permission we ask for reaches only the documents you pick — not the rest of your Drive —
+        and your document text is never stored. The{' '}
         <Link to="/privacy" className="text-accent-400 underline underline-offset-2">
           privacy policy
         </Link>{' '}

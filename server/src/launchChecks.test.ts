@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { launchReport, legalReport } from './launchChecks.js';
+import { googleReport, launchReport, legalReport } from './launchChecks.js';
 
 /** A production environment with everything a paying deploy needs. */
 const PAYING: NodeJS.ProcessEnv = {
@@ -119,5 +119,34 @@ describe('legalReport', () => {
     // address on the operator's domain, not a placeholder. Demanding the
     // variable be set anyway would block a launch over nothing.
     assert.ok(!subjects(legalReport({})).includes('SUPPORT_EMAIL'));
+  });
+});
+
+/**
+ * The Picker key is not optional garnish. Under `auth/drive.file` a pasted
+ * document link grants nothing at all, so a deploy without it silently loses
+ * the "write into a document I already have" path — which is most of what
+ * people come for.
+ */
+describe('googleReport', () => {
+  it('is satisfied once the Picker can load and find shared drives', () => {
+    assert.deepEqual(
+      googleReport({
+        GOOGLE_PICKER_API_KEY: 'AIza-not-a-real-key',
+        GOOGLE_PROJECT_NUMBER: '123456789012',
+      }),
+      [],
+    );
+  });
+
+  it('names both pieces the existing-document path needs', () => {
+    assert.deepEqual(subjects(googleReport({})), [
+      'GOOGLE_PICKER_API_KEY',
+      'GOOGLE_PROJECT_NUMBER',
+    ]);
+  });
+
+  it('treats a whitespace-only key as unset', () => {
+    assert.ok(subjects(googleReport({ GOOGLE_PICKER_API_KEY: '  ' })).includes('GOOGLE_PICKER_API_KEY'));
   });
 });

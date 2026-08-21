@@ -190,22 +190,30 @@ property-tested over hundreds of seeds and the full humanness and duration range
 ### 1. Google Cloud Console
 
 1. Go to <https://console.cloud.google.com/> and create (or select) a project.
-2. **APIs & Services → Library →** enable the **Google Docs API**.
+2. **APIs & Services → Library →** enable the **Google Docs API** *and* the
+   **Google Picker API**. Both are needed: the first to write, the second so a user can hand
+   over a document they already have.
 3. **APIs & Services → OAuth consent screen:**
    - User type: **External** (or Internal for a Workspace-only app).
    - Fill in app name, support email, developer contact.
    - **Scopes:** add `openid`, `.../auth/userinfo.email`, `.../auth/userinfo.profile`, and
-     `https://www.googleapis.com/auth/documents`.
+     `https://www.googleapis.com/auth/drive.file`.
    - While the app is unverified, add yourself under **Test users**.
 4. **APIs & Services → Credentials → Create credentials → OAuth client ID:**
    - Application type: **Web application**.
    - **Authorised redirect URIs:** `http://localhost:8080/auth/google/callback` for local
      development, plus `https://your-api-domain/auth/google/callback` for production. This must
      match `GOOGLE_CALLBACK_URL` character for character.
-5. Copy the client ID and secret into `.env`.
+5. **APIs & Services → Credentials → Create credentials → API key.** Restrict it by HTTP
+   referrer to your own domain and put it in `.env` as `GOOGLE_PICKER_API_KEY`. It ships to the
+   browser, so it is public by design — restriction is the protection, not secrecy.
+6. Copy the client ID and secret into `.env`, along with the project **number** as
+   `GOOGLE_PROJECT_NUMBER`.
 
-> The `documents` scope lets TurtleType edit a document you point it at. It does not grant Drive
-> access, so the app cannot list or open files you did not give it.
+> The `drive.file` scope is per-file: TurtleType can reach documents it created for you and
+> documents you hand it through the Google Picker, and nothing else in your Drive. A pasted link
+> grants nothing on its own — the picker is what turns it into permission, which is why the
+> Picker API key is not optional.
 
 ### 2. PostgreSQL
 

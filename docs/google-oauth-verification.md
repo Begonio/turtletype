@@ -1,5 +1,12 @@
 # Getting past the 100-user cap
 
+**Decision reversed (20 August 2026): TurtleType now requests
+`https://www.googleapis.com/auth/drive.file`, not `auth/documents`.** Google's
+verification review refused the broader scope under the minimum-scope rule and
+recommended the narrower one by name. The fallback documented here since
+August has become the plan. What that took, and what still has to happen in the
+Cloud Console, is [below](#the-migration).
+
 **Correction (August 2026):** an earlier version of this document said moving
 to **In production** removes the cap. It does not. Publishing status and
 verification are two different things, and only the second one lifts the cap.
@@ -15,11 +22,11 @@ There are three states, not two:
 Publishing to production without verification buys two real things — anyone can
 sign in, and grants stop dying every 7 days — and costs one: you start spending
 a 100-user allowance that, per Google's documentation, applies over the entire
-lifetime of the project and cannot be reset. Verification is what removes both
-the warning and the cap.
+lifetime of the project and cannot be reset.
 
-What verification takes depends entirely on which scopes you ask for, and that
-is the decision this document is really about.
+**On `drive.file` none of this applies.** The scope is non-sensitive, so there
+is nothing to verify, no cap, and no warning screen — that is the whole reason
+the review pushed us here, and the whole reason it is worth the work.
 
 > Google's own pages are unreachable from the environment these notes were
 > written in, so the table above is assembled from Google's documentation as
@@ -27,158 +34,172 @@ is the decision this document is really about.
 > in the Cloud Console before you rely on the "lifetime, non-resettable" detail
 > — it is the one that would hurt to be wrong about.
 
-> **Decision (August 2026): stay on `documents` and verify.** The alternative
-> is written out below because it is genuinely the cheaper path and worth
-> understanding before committing — but the call has been made, and everything
-> from "If you stay on `documents`" onward is the live checklist. Read the fork
-> if you want to know what was traded away; skip to
-> [what to actually do](#if-you-stay-on-documents) if you just want to submit.
+## What Google actually said
 
-## What to do while you wait
+The verification console shows four checks green — app functionality, branding,
+appropriate data access — and one red:
 
-Verification takes weeks. Two things are worth doing on day one rather than at
-the end of it:
+> **Request minimum scopes.** Your app does not appear to use the minimum
+> scope(s) necessary for functionality.
 
-1. **Publish to production now, before the review finishes.** The 7-day grant
-   expiry in Testing is not a nuisance for this product, it is a defect: jobs
-   run for hours and users come back, so a token that dies weekly means
-   re-consent as a routine part of using a thing they paid for. Production
-   removes it while leaving the warning in place. Do this even though the
-   warning stays.
-2. **Watch the 100-user counter like a runway.** In production and unverified,
-   it is 100 sign-ups and then nothing until review lands — and the count does
-   not reset. For a paid product that is the whole customer base until Google
-   answers. Submit verification the same week you start charging, not after.
+The accompanying mail from the Trust and Safety team names `auth/documents`,
+recommends `drive.file`, and sets out two ways to answer:
 
-The sign-in page and the pricing page both explain the warning screen while
-`OAUTH_APP_VERIFIED` is false — what it means, and the Advanced → Go to
-TurtleType (unsafe) path through it. Set `OAUTH_APP_VERIFIED=true` the day
-verification lands and the explanation disappears on its own.
+- **Option 1** — add the recommended scope, remove the ones the app does not
+  need from both the codebase and the Cloud project, and reply *"Confirming
+  narrower scopes"*.
+- **Option 2** — reply *"Unable to use narrower scopes"* with a justification.
 
-## The fork in the road
+Two sentences in that mail close off Option 2 for this app:
 
-TurtleType currently requests `https://www.googleapis.com/auth/documents` —
-read and write access to **every** Google Docs document the user owns. Google
-classifies that as a **sensitive** scope, so production means going through
-OAuth verification: a review that takes weeks and can come back with change
-requests.
+1. *"UI preferences or client library limitations alone are not valid policy
+   exceptions from these requirements."* The justification this repo had
+   prepared — that our existing-document path is a pasted URL, which
+   `drive.file` cannot reach — is precisely a UI argument.
+2. The mail points at `DocsView.setFileIds()`, added to the Google Picker API
+   in January 2025, which opens a picker **pre-navigated to a file ID the app
+   already knows**. That is the pasted-URL flow, preserved, with one
+   confirmation click added. Google pre-empted our objection and then handed us
+   the fix.
 
-There is a second path. `https://www.googleapis.com/auth/drive.file` grants
-per-file access — only files your app created, plus files the user explicitly
-hands you through the Google Picker. Google classifies it as **non-sensitive
-and recommended**, and non-sensitive scopes do not require verification at all.
-You publish to production and the cap is gone the same day.
+So the answer is Option 1, and the old justification is now false anyway: it
+ended with the line *"If you later build the Picker, this justification stops
+being true, and at that point you should be switching scopes rather than
+defending this one."* The Picker is built.
 
-The two paths are worth comparing honestly, because one is a week of
-engineering and the other is a month of waiting:
+## The migration
 
-| | `documents` (today) | `drive.file` |
+### What changed in the code
+
+| | Before | After |
 |---|---|---|
-| Google classification | Sensitive | Non-sensitive |
-| Verification needed | Yes — full review | No |
-| Time to unlimited users | Weeks, reviewer-dependent | Same day |
-| Annual re-review | Yes | No |
+| Scope requested | `auth/documents` | `auth/drive.file` |
+| Reach | Every document the account owns | Documents this app created + documents handed over through the Picker |
+| Existing-doc flow | Paste a URL, server calls `documents.get` on the ID | Paste a URL *or* browse, confirm in the Google Picker, server gets an ID Google has granted |
+| Verification | Required, weeks, annually | Not required |
 | Consent screen reads | "See, edit, create and delete **all** your Google Docs documents" | "See, edit, create and delete **only the specific files** you use with this app" |
-| Work required | None | Google Picker for the existing-doc path |
-| Security assessment (CASA) | Not required — that applies to *restricted* scopes, not sensitive ones | Not required |
 
-The consent screen row deserves attention beyond the compliance angle. The
-current wording asks a stranger to grant a tool they just found full access to
-every document they own. That is a real conversion cost on the signup step, and
-it is also, judging by `Landing.tsx`, already a known support problem — there is
-a dedicated `missing_permission` error message for people who balk at the
-checkbox. The narrower scope removes the objection instead of explaining it.
+- `config.google.docsAccessScope` is the single place the scope string lives.
+- `routes/picker.ts` (`GET /api/picker/session`) hands the browser its own
+  access token plus the Picker API key. It is load-bearing, not a convenience:
+  without it there is no way to reach a document the user already has.
+- `client/src/lib/picker.ts` loads the Picker and, when the paste box holds a
+  recognisable link, calls `setFileIds` so the user lands on that exact
+  document rather than hunting for it.
+- `users.granted_scopes` records what each account granted. Rows from before
+  the migration hold the old scope (or NULL, from before the column existed),
+  and both answer "no" — so those accounts are sent through consent once, the
+  first time they open the picker. That is the whole migration for an existing
+  user.
 
-### What switching would involve
+**The Docs API accepts `drive.file` for all three calls this app makes** —
+`documents.create`, `documents.get` and `documents.batchUpdate` all list it
+among their authorization scopes. That was the ten-minute question the old
+version of this document flagged as never having been answered; it is answered.
+Confirm it against a real document before submitting anyway — it is still the
+assumption the whole plan rests on.
 
-1. **Verify the Docs API accepts `drive.file`.** Google's Drive documentation
-   states the scope "works with all Drive API REST Resources", and Docs API
-   scopes are documented alongside it, but I could not reach
-   `developers.google.com` from this environment to confirm the Docs API
-   specifically. Test it before committing: change `config.google.scopes`,
-   re-consent, and call `documents.batchUpdate` on a document the app created.
-   Ten minutes, and it decides the whole plan.
-2. **Creating new documents already works.** `drive.file` covers files the app
-   creates, which is the default path in `Controls.tsx`.
-3. **The existing-document path needs the Google Picker.** Today the user
-   pastes a URL and the server calls `getAppendIndex` on the ID. Under
-   `drive.file` that call fails unless the file came through the Picker, so the
-   "Use an existing doc" radio becomes a Picker button. This is the only real
-   work in the migration.
-4. **Existing users must re-consent.** Their current grant is for the old
-   scope. `includeGrantedScopes: true` is already set in `auth/routes.ts`, so
-   the transition is a re-prompt rather than a break.
+### What still has to happen in the Cloud Console
 
-The case for switching was: verification is weeks of latency you cannot
-compress, and it recurs annually. The case against — the one that won — is that
-the Picker is real UI work on the path most users take, `drive.file` cannot
-reach a document the user pastes a link to without it, and the ten-minute
-compatibility test in step 1 was never run. Verification costs waiting; the
-switch costs a rewrite of the existing-doc flow plus forcing every current user
-to re-consent.
+Code alone does not change what Google sees. All of this is manual:
 
-**This remains the fallback.** If review comes back with change requests you do
-not want to meet, or drags past what the launch can absorb, step 1 is still ten
-minutes and the escape hatch is still open.
+- [ ] **Enable the Google Picker API** under *APIs & Services → Library*.
+      Separate setting from the Docs API, and a missing one fails in a way that
+      does not mention the other.
+- [ ] **Create a browser API key** under *APIs & Services → Credentials*,
+      restrict it by HTTP referrer to `type.turtlegames.org`, and set it as
+      `GOOGLE_PICKER_API_KEY` on the deploy. Without it the existing-document
+      option switches itself off — deliberately, rather than failing at job
+      start.
+- [ ] **Set `GOOGLE_PROJECT_NUMBER`** (the project *number*, not the ID). The
+      Picker needs it to name the app being granted access and to show files on
+      shared drives.
+- [ ] **Add `auth/drive.file`** to the OAuth consent screen's scope list.
+- [ ] **Remove `auth/documents`** from the consent screen. Google's mail says
+      *"DO NOT remove any previously approved scopes"* — `auth/documents` was
+      never approved, it is the scope under review, so it goes. Removing it is
+      what actually makes the app non-sensitive.
+- [ ] **Reply to the Trust and Safety mail** with the text below. Nothing moves
+      until you reply — the mail is explicit that the request stays open until
+      you confirm.
+- [ ] **Set `OAUTH_APP_VERIFIED=true`** once the sensitive scope is gone from
+      the consent screen. With only non-sensitive scopes there is no unverified
+      warning to prepare people for, and a notice about a screen they will not
+      see is worse than no notice. Nothing in the code can detect the console
+      change, which is why this is a flag.
+- [ ] **Run `npm run launch:check -w server`** against the production
+      environment. It now fails on a missing Picker key as well as the legal
+      identity variables.
 
-## If you stay on `documents`
+### The reply to send
 
-Everything below is what the review actually checks. The pages it requires are
-now in the repo — `/privacy` and `/terms`, linked from the homepage footer —
-because a missing privacy policy is the single most common reason a submission
-bounces.
+Reply directly to the Trust and Safety mail, keeping it on the same thread:
 
-### Before you submit
+> Confirming narrower scopes.
+>
+> We have migrated TurtleType to `https://www.googleapis.com/auth/drive.file`
+> and removed `https://www.googleapis.com/auth/documents` from both our
+> application codebase and our Cloud Console project.
+>
+> Our existing-document flow previously relied on a user pasting a document
+> URL. We have replaced it with the Google Picker, using
+> `DocsView.setFileIds()` so that a user who pastes a link is taken straight to
+> that document in the picker and grants access to that single file. Documents
+> we create on the user's behalf are covered by `drive.file` already. The three
+> Docs API methods we call — `documents.create`, `documents.get` and
+> `documents.batchUpdate` — are all authorized by `drive.file`, so no
+> functionality is lost.
+>
+> No other scopes are requested beyond `openid`, `userinfo.email` and
+> `userinfo.profile`, which we use for sign-in and account identity.
+
+### What the migration costs, honestly
+
+- **Every existing user re-consents once.** Their grant is for a scope we no
+  longer request. They are sent through the Google screen the first time they
+  pick a document, and not again.
+- **A pasted link is no longer sufficient by itself.** It survives as a
+  shortcut — paste, then confirm in the picker — but the confirmation step is
+  real and cannot be removed. That is the point of the scope.
+- **Two more things must be right in the Cloud Console**, and both fail
+  quietly if they are not. Hence the launch check.
+
+Set against: no verification queue, no annual re-review, no 100-user cap, no
+"unverified app" interstitial in front of a page that then asks for money, and
+a consent screen that asks for one document instead of all of them. The last
+one was already a known conversion problem — `Landing.tsx` has a dedicated
+`missing_permission` message for people who balked at the old checkbox.
+
+## What the review still checks
+
+Publishing status is separate from verification, and the homepage and privacy
+requirements are checked regardless of which scopes you ask for. Everything in
+this section stands.
+
+### Before you go live
 
 - [ ] **Own the domain in Search Console.** Verify `turtlegames.org` at
       [search.google.com/search-console](https://search.google.com/search-console),
       using the same Google account that owns the Cloud project. Then add it
       under *APIs & Services → OAuth consent screen → Authorised domains*.
-      Every URL you give the reviewer must sit on a verified domain.
-- [ ] **Set the operator identity variables.** No longer a code change: the
-      pages read `LEGAL_OPERATOR`, `LEGAL_JURISDICTION`, `SUPPORT_EMAIL` and
-      `LEGAL_LAST_UPDATED` from `GET /api/legal` at runtime, so a correction a
-      reviewer asks for is a variable change and a restart rather than a
-      redeploy — which matters when each round trip restarts their clock. The
-      first two are required and have no default; the support address already
-      defaults to `help@turtlegames.org`. Run `npm run launch:check -w server`
-      against the production environment, then load `/privacy` and `/terms` and
-      confirm no amber "not configured" notice is showing.
+      Every URL you give Google must sit on a verified domain.
+- [ ] **Set the operator identity variables.** The pages read `LEGAL_OPERATOR`,
+      `LEGAL_JURISDICTION`, `SUPPORT_EMAIL` and `LEGAL_LAST_UPDATED` from
+      `GET /api/legal` at runtime, so a correction is a variable change and a
+      restart rather than a redeploy. The first two are required and have no
+      default. Run `npm run launch:check -w server` against the production
+      environment, then load `/privacy` and `/terms` and confirm no amber "not
+      configured" notice is showing.
 - [ ] **Confirm `help@turtlegames.org` is monitored.** It is the user-support
-      email on the consent screen, so Google's review correspondence goes
-      there. An unread mailbox stalls the review indefinitely.
+      email on the consent screen, so Google's correspondence goes there. An
+      unread mailbox stalls everything indefinitely — including the reply above.
 - [ ] **Have a lawyer look at the policy.** What is in the repo is accurate to
       what the code does — that is the part I could get right — but accuracy is
       not the same as sufficiency in your jurisdiction, and it is not legal
       advice.
 - [ ] **Complete the OAuth consent screen.** App name, user-support email, an
       app logo (120×120 PNG), the homepage, the privacy policy URL, the terms
-      URL, and a developer contact email. All required, all checked.
-- [ ] **Paste the scope justification.** This is the field the review turns
-      on. Text ready to use is in [Scope justification](#scope-justification)
-      below.
-- [ ] **Record the demo video** to the shot list in
-      [Demo video script](#demo-video-script) below. Unlisted YouTube is fine.
-- [ ] **Switch publishing status to In production** and submit. (If you took
-      the advice above you did this weeks ago — submitting is the part that
-      remains.)
-
-### After you submit
-
-Expect an initial response in several business days and the whole process to
-run into weeks. Replies from the review team go to the developer contact email
-— answer them quickly, because the clock restarts on each round trip. The most
-common follow-up is a request to re-record the video showing something they
-could not see the first time.
-
-When it is granted, set `OAUTH_APP_VERIFIED=true` on the deploy. That is what
-removes the "Google will show a warning first" notice from the sign-in and
-pricing pages; nothing else reads the flag, so leaving it false only means
-users are warned about a screen they will no longer see.
-
-Note that verification is not permanent: sensitive-scope apps are re-reviewed
-annually, and letting that lapse drops you back behind the cap — and back to
-`OAUTH_APP_VERIFIED=false` until it is restored.
+      URL, and a developer contact email.
 
 ### What to enter in the Scopes step
 
@@ -190,34 +211,36 @@ screen should list exactly these — no more:
 | `openid` | Non-sensitive | Sign-in |
 | `https://www.googleapis.com/auth/userinfo.email` | Non-sensitive | Account identity, billing receipts |
 | `https://www.googleapis.com/auth/userinfo.profile` | Non-sensitive | Name and avatar in the UI |
-| `https://www.googleapis.com/auth/documents` | **Sensitive** | The whole product |
+| `https://www.googleapis.com/auth/drive.file` | **Non-sensitive** | The whole product |
 
 Passport sends the middle two as the `email` and `profile` shorthands, which is
-why the console shows them under their full `userinfo.*` names. Only the last
-row triggers verification, and it is the only one with a justification field.
+why the console shows them under their full `userinfo.*` names.
 
-**Add nothing else.** The temptation is to add a Drive scope "in case", and it
-is an expensive mistake: `drive`, `drive.readonly` and friends are
-**restricted**, not merely sensitive, and restricted scopes require a
-third-party CASA security assessment on top of the review — a different order
-of cost and delay. Nothing in this codebase needs one. All three Docs calls it
-makes are covered by `documents` alone:
+**Add nothing else.** The temptation is to reach for a wider Drive scope when
+the per-file one feels restrictive, and it is an expensive mistake: `drive`,
+`drive.readonly` and friends are **restricted**, not merely sensitive, and
+restricted scopes require a third-party CASA security assessment — recertified
+annually — on top of everything else. `drive.file` requires none of that, which
+is exactly why Google recommends it. All three Docs calls this codebase makes
+are covered by it:
 
 - `documents.create` — the new-document path (`docs/documents.ts`)
 - `documents.get` — reading the document's length so text appends at the right
   index
 - `documents.batchUpdate` — every write
 
-Creating a document does **not** require a Drive scope, which is the usual
-reason people reach for one.
+### Enabling the APIs is a separate step
 
-### Enabling the API is a separate step
+Declaring a scope and enabling an API are different settings, and having one
+without the other fails in a way that does not mention the other. Two APIs
+matter now:
 
-Declaring a scope and enabling the API are different settings, and having one
-without the other fails in a way that does not mention the other. If the
-**Google Docs API** is not enabled under *APIs & Services → Library*, every job
-fails with `403 SERVICE_DISABLED` no matter how the consent screen is
-configured. Check it before blaming scopes.
+- **Google Docs API** — without it, every job fails with `403 SERVICE_DISABLED`
+  no matter how the consent screen is configured.
+- **Google Picker API** — without it, the picker will not load and the
+  existing-document path is dead.
+
+Check both under *APIs & Services → Library* before blaming scopes.
 
 ### Homepage requirements
 
@@ -261,17 +284,20 @@ satisfies all of this — `https://type.turtlegames.org`, not a deep link — an
 the privacy policy URL there must match the one the homepage links to, exactly,
 including the scheme and any trailing slash.
 
-### Scope justification
+### How to describe the scope
 
-The field the review turns on. Paste this, adjusting only the operator name:
+`drive.file` is non-sensitive, so there is no justification field to fill in
+and nothing to defend. The description below is what the homepage, `/privacy`
+and the consent screen all say, and it is worth keeping them in agreement:
 
 > TurtleType writes text that the user supplies into a Google Docs document
-> that the user nominates. The user pastes their own text into our app, gives
-> us a document link or asks us to create a new document, and we insert that
-> text into the document gradually over a period the user chooses.
+> that the user chooses. The user pastes their own text into our app, then
+> either asks us to create a new document or hands us an existing one through
+> the Google Picker, and we insert that text into the document gradually over a
+> period the user chooses.
 >
-> We request `https://www.googleapis.com/auth/documents` for exactly two
-> operations, both on documents the user has identified:
+> We use `https://www.googleapis.com/auth/drive.file` for exactly two
+> operations, both on documents the user has explicitly given us:
 >
 > 1. `documents.batchUpdate` — to insert the user's own text into the document.
 >    This is the entire function of the product.
@@ -285,52 +311,41 @@ The field the review turns on. Paste this, adjusting only the operator name:
 > the character count, and the job's status. No document content is used for
 > advertising, sold, shared, or used to train machine-learning models, and no
 > human at our organisation reads user documents.
->
-> A narrower scope is not sufficient for our core use case. Most of our users
-> want the text written into a document that already exists — an assignment
-> template, a shared draft — which they identify to us by pasting its URL.
-> `drive.file` grants access only to files our app created or that were passed
-> through the Google Picker, so it cannot reach a document identified by link,
-> which is the primary flow.
 
-That last paragraph is the one reviewers actually weigh — they ask why
-`drive.file` will not do, and "we did not want to build a Picker" is not an
-answer. The reason given above is true of the product as it stands: the
-existing-document path is a pasted URL. If you later build the Picker, this
-justification stops being true, and at that point you should be switching
-scopes rather than defending this one.
-
-Everything else above is verifiable against the code, which is what makes it
-worth saying: the text never reaches Postgres (`jobs` stores `doc_id`,
+Everything in that paragraph is verifiable against the code, which is what
+makes it worth saying: the text never reaches Postgres (`jobs` stores `doc_id`,
 `total_chars` and status, never the text), and `getAppendIndex` in
-`server/src/docs/documents.ts` is the only read.
+`server/src/docs/documents.ts` is the only read. **If a change would make that
+false, the change breaks the submission, not just a comment.**
 
 ### Demo video script
 
-Reviewers reject videos that skip steps or cut between them, because a cut is
-where a step could have been hidden. Record in one take, 2–3 minutes, screen
-only, with narration. Keep the browser URL bar visible throughout.
+Not required for a non-sensitive scope, but Google may still ask, and recording
+one is the cheapest way to answer a follow-up without another round trip.
+Record in one take, 2–3 minutes, screen only, with narration. Keep the browser
+URL bar visible throughout — reviewers reject videos that cut between steps,
+because a cut is where a step could have been hidden.
 
 1. **Start signed out**, on `https://type.turtlegames.org`. Let the URL bar be
    readable for a beat.
 2. **Click Sign in with Google.** On the consent screen, pause long enough that
-   the client ID in the URL is legible — they check it matches the project
-   under review — and read the requested permission aloud.
-3. **Tick the Google Docs permission box** on camera, and say why it is needed
+   the client ID in the URL is legible, and read the requested permission
+   aloud — it now says *only the specific files you use with this app*.
+3. **Tick the Google Drive permission box** on camera, and say why it is needed
    while you do: *"TurtleType needs this to write my text into the document I
-   choose. It reads the document's length so it knows where to add text, and
-   nothing else."*
+   choose. It reads that document's length so it knows where to add text, and
+   it cannot see anything else in my Drive."*
 4. **Land in the app** signed in.
 5. **Paste text** into the composer.
-6. **Choose the existing-document option and paste a Google Docs URL.** This is
-   the step that justifies the scope over `drive.file` — do not skip it and do
-   not use the create-new-document path here.
+6. **Choose the existing-document option, paste a Google Docs URL, and open the
+   picker.** Show the picker landing on that exact document and confirm it.
+   This is the step that shows the narrower scope doing the job the broader one
+   used to — do not skip it and do not use the create-new-document path here.
 7. **Start the job.** Show the progress panel and the cost in credits.
 8. **Switch to the Google Doc** in another tab and show the text arriving.
 9. **Show the document's version history** (File → Version history) with
-   several separate revisions. This is worth including even though review does
-   not require it: it shows a reviewer what the product is for, which makes the
-   scope request read as purposeful rather than broad.
+   several separate revisions. It shows a reviewer what the product is for,
+   which makes the permission request read as purposeful rather than broad.
 
 Do not show a payment flow. It is not what they are reviewing, and it lengthens
 the video.
@@ -338,7 +353,7 @@ the video.
 ## Separately: check your API quota before you have traffic
 
 This is not part of verification, but it is the next thing that will bite once
-the cap is gone, and it is invisible until it isn't.
+you have users, and it is invisible until it isn't.
 
 The Docs API enforces per-minute write limits per project as well as per user.
 The runner caps itself at `DOCS_WRITES_PER_MINUTE` (55) **per job**, and

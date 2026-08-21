@@ -151,6 +151,49 @@ export function launchReport(
 }
 
 /**
+ * What the Google integration needs beyond the OAuth credentials themselves.
+ *
+ * Same shape and same reasoning as `legalReport` below: a warning at boot,
+ * an error under `npm run launch:check`. The app still starts and still writes
+ * into documents it creates without any of this — what it loses is the
+ * "write into a document I already have" path, which under `auth/drive.file`
+ * runs entirely through the Google Picker and cannot fall back to a pasted
+ * URL. That is most of the product, so it should not be discovered by a
+ * customer.
+ */
+export function googleReport(env: NodeJS.ProcessEnv): LaunchProblem[] {
+  const problems: LaunchProblem[] = [];
+
+  if (!value(env, 'GOOGLE_PICKER_API_KEY')) {
+    problems.push({
+      subject: 'GOOGLE_PICKER_API_KEY',
+      detail:
+        'Browser API key for the Google Picker, from the same Cloud project (APIs & Services → ' +
+        'Credentials → Create credentials → API key), with the Google Picker API enabled. ' +
+        'Without it the "use an existing document" option is switched off entirely: under the ' +
+        'drive.file scope a pasted link grants nothing, and the Picker is the only way a user ' +
+        'can hand over a document they already have.',
+    });
+  }
+
+  // Not fatal on its own — the Picker works against My Drive without it — so
+  // it is deliberately not in the list above. It is still wrong to ship
+  // without, because a user whose document lives on a shared drive simply
+  // cannot find it in the picker and has no way to tell why.
+  if (!value(env, 'GOOGLE_PROJECT_NUMBER')) {
+    problems.push({
+      subject: 'GOOGLE_PROJECT_NUMBER',
+      detail:
+        'The Cloud project number (Cloud Console → project picker, not the project ID). The ' +
+        'Picker uses it to name the app being granted access and to show files on shared drives. ' +
+        'Without it, documents on a shared drive are unreachable.',
+    });
+  }
+
+  return problems;
+}
+
+/**
  * The legal identity the privacy policy, terms and OAuth consent screen all
  * quote. Separate from the billing rules above because the failure mode is
  * different: a missing jurisdiction is an embarrassment on a page, not a

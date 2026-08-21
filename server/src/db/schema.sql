@@ -29,6 +29,16 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_subscription_id TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS plan TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS current_period_end TIMESTAMPTZ;
 
+-- The scopes Google said this account granted, space-delimited, as returned by
+-- the token endpoint at sign-in.
+--
+-- Recorded so the app can tell a grant that predates the August 2026 move from
+-- `auth/documents` to `auth/drive.file` from one that carries it, without
+-- asking Google. A row that signed in before this column existed is NULL,
+-- which reads as "not the current grant" — exactly right, since every such row
+-- holds the old scope. See auth/scopes.ts.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS granted_scopes TEXT;
+
 -- A negative balance would mean a job ran that nobody paid for. Postgres
 -- enforces it so no amount of concurrent webhook and job traffic can produce
 -- one; the reserve path relies on this as its last line of defence.

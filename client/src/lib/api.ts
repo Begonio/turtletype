@@ -168,8 +168,29 @@ export interface JobSnapshot {
   completedAt: string | null;
 }
 
+/**
+ * What the browser needs to open a Google Picker: the user's own access token,
+ * the project's browser API key, and the project number.
+ *
+ * Fetched per picker open rather than held in the store — the token is a
+ * short-lived bearer credential, and keeping it in application state (and
+ * therefore, via `persist`, potentially in localStorage) would be the wrong
+ * place for it.
+ */
+export interface PickerSessionResponse {
+  /** False when the deploy has no Picker API key: the existing-doc path is off. */
+  configured: boolean;
+  accessToken?: string;
+  apiKey?: string;
+  appId?: string;
+  scope?: string;
+}
+
 export const api = {
   me: () => request<{ user: CurrentUser }>('/api/me'),
+
+  /** Credentials for one Google Picker open. Never cached. */
+  pickerSession: () => request<PickerSessionResponse>('/api/picker/session'),
 
   createJob: (input: { text: string; durationMs?: number; docId?: string }) =>
     request<CreateJobResponse>('/api/jobs', {

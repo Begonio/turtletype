@@ -4,7 +4,7 @@ Writes text into a Google Doc the way a human would type it, instead of pasting.
 
 ## Flow
 
-1. User signs in with Google, pastes text, picks a target duration, points it at a doc ID.
+1. User signs in with Google, pastes text, picks a target duration, and either lets the app create a doc or hands one over through the Google Picker.
 2. Server plans the whole session upfront in memory: an event sequence of per-character delays, thinking pauses, typos, and deferred corrections.
 3. Types in bursts of ~55-150 characters separated by 150+ second rests (deliberately above the Docs checkpoint interval, so each burst becomes its own revision).
 4. Writes about a third of those bursts "laboured" — one long stall mid-burst, so the burst runs past a checkpoint and a revision lands mid-sentence. The rest go down in flow, twenty seconds each.
@@ -19,7 +19,7 @@ Monorepo, npm workspaces, `server/` + `client/`, TypeScript throughout, ESM.
 
 **Backend (`server/`)**
 - Node.js + Express
-- Passport + `passport-google-oauth20` (scopes: openid, email, profile, `documents`)
+- Passport + `passport-google-oauth20` (scopes: openid, email, profile, `drive.file`)
 - `express-session` + `connect-pg-simple`
 - PostgreSQL via `pg` — users, tokens, jobs
 - Google Docs REST API v1 called directly with `fetch` (base URL is env-configurable for integration tests against a fake Docs server)
@@ -71,6 +71,8 @@ Monorepo, npm workspaces, `server/` + `client/`, TypeScript throughout, ESM.
 - **`config.ts` keeps secrets behind getters** so pure modules can be imported in tests without a live database.
 - **Billing fails open in development and closed in production.** `config.billing.enabled` is false with no Stripe keys and the paywall waves jobs through — correct on a laptop, a silent giveaway on the deploy that is meant to charge. `preflight.ts` runs `launchChecks.ts` and exits non-zero in production unless the deploy can bill, and `hasCredits` answers 503 rather than `next()` if it ever finds itself there anyway. Don't "simplify" either back into a plain `next()`.
 - **`launchChecks.ts` is pure** — it reads an env object passed to it, never `process.env` directly, so the launch rules are testable without an environment. Same discipline as `humanize.ts`.
+- **A pasted document URL is not permission.** Under `drive.file` the only thing that makes an existing document writable is the user confirming it in the Google Picker, so the job submission sends the ID the picker returned — never the contents of the paste box. Re-routing the paste box straight to `POST /api/jobs` looks like a simplification and is a 404 on every existing-doc job.
+- **The scope string lives in exactly one place**, `config.google.docsAccessScope`, and `auth/scopes.ts` checks grants against it. Google's review turns on which scope the app actually requests; a second hardcoded copy is how the two drift apart.
 - **The displayed app name must read exactly `TurtleType`.** It has to match the OAuth consent screen — Google's homepage review rejected a lowercase `turtletype` wordmark as a mismatch. `components/Wordmark.tsx` is the single source; don't restyle it to lowercase or swap it for an image.
 - **The homepage must not redirect signed-in visitors.** It used to bounce them to `/app`, which hid it from the one person who has to read it: a verification reviewer, who signs in to test and then goes back to the homepage. Review also requires the homepage to describe the app's functionality and explain each Google permission in visible copy, not small print — see `docs/google-oauth-verification.md`.
 - **Operator identity lives in env, not in the client bundle.** `/privacy` and `/terms` read `LEGAL_OPERATOR`, `SUPPORT_EMAIL`, `LEGAL_JURISDICTION` from `GET /api/legal` at runtime. Google's OAuth review commonly asks for a correction here, and every round trip restarts their clock — a variable change beats a redeploy. An unset jurisdiction renders a visible notice rather than an invented one; don't replace it with a plausible default.
@@ -83,38 +85,58 @@ Monorepo, npm workspaces, `server/` + `client/`, TypeScript throughout, ESM.
 
 The remaining lever is burst size: duration is essentially `bursts x (burst span + rest)`, and burst size is fixed at 55-150 chars regardless of length, so a 40,000-char document plans 348 revisions. No human produces that in one document — real long documents are written across sessions. Scaling `BURST_MIN_CHARS` / `BURST_MAX_CHARS` up with text length would cut the runtime proportionally, but it trades away history granularity (each revision becomes a bigger lump of new text), so it is a product decision, not a tuning one.
 
-## Google OAuth verification
+## Google OAuth scope
 
-The app is capped at 100 test users because `auth/documents` is a **sensitive**
-scope and the OAuth app is in Testing status. **Decision (August 2026): stay on
-`documents` and go through verification** rather than switching to the
-non-sensitive `drive.file` scope — the existing-doc path is a pasted URL, which
-`drive.file` cannot reach without a Google Picker nobody has built. That
-remains the documented fallback if review drags.
+**The app requests `https://www.googleapis.com/auth/drive.file`.** Google's
+verification review refused `auth/documents` in August 2026 under the
+minimum-scope rule and recommended the narrower scope by name, so the migration
+that had been documented as a fallback became the plan. `drive.file` is
+non-sensitive: no verification, no 100-user cap, no "unverified app" screen.
+
+`drive.file` is **per-file**. It reaches documents this app created and
+documents the user hands over through the **Google Picker**, and nothing else.
+A pasted URL grants nothing at all — which makes `routes/picker.ts` and
+`client/src/lib/picker.ts` load-bearing rather than convenience UI. The picker
+uses `DocsView.setFileIds()` so a pasted link still works as a shortcut: it
+pre-navigates to that document and the user confirms it in one click.
+
+Two Cloud Console settings the code cannot check for itself: the **Google
+Picker API** must be enabled alongside the Docs API, and `GOOGLE_PICKER_API_KEY`
+/ `GOOGLE_PROJECT_NUMBER` must be set. Without them the existing-document path
+switches itself off rather than failing at job start. `launchChecks.ts` fails
+the launch gate on both.
+
+`users.granted_scopes` records what each account granted. NULL (a row from
+before the column) or a list without `drive.file` means the grant predates the
+migration, and the picker route answers `REAUTH_REQUIRED` so the client sends
+that user through consent once. That is the entire migration for an existing
+account — do not "fix" it by accepting the old scope as equivalent, since a
+`documents` token cannot drive the picker.
 
 Publishing status and verification are **separate settings**. In production but
-unverified, users still meet the "Google hasn't verified this app" interstitial
-and the app is capped at 100 new users for the lifetime of the project — but
-grants stop expiring every 7 days, which in Testing they do. So publish to
-production early and submit verification early; only verification lifts the
-warning and the cap.
+unverified with a *sensitive* scope, users meet the "Google hasn't verified this
+app" interstitial and the app is capped at 100 new users for the lifetime of the
+project. On `drive.file` alone neither applies — but the warning only stops once
+`auth/documents` is removed from the consent screen, which is a console change.
 
 `OAUTH_APP_VERIFIED` drives the sign-in warning notice (`UnverifiedAppNotice`)
 and nothing else. It is a flag rather than hardcoded copy for the same reason
 the landing page stopped hardcoding "free while in beta" — a notice about a
-temporary state outlives the state unless something removes it.
+temporary state outlives the state unless something removes it. Flip it once
+the sensitive scope is gone from the console.
 
-`docs/google-oauth-verification.md` holds the submission checklist, the scope
-justification text, and the demo-video shot list.
+`docs/google-oauth-verification.md` holds the migration, the console checklist,
+the reply Google is waiting on, and the demo-video shot list.
 `docs/go-live.md` is the wider launch sequence (identity → billing → OAuth).
 
-The scope justification tells reviewers document content is never stored — that
-is true today (`jobs` holds `doc_id`, `total_chars` and status, never text) and
-it is the strongest claim in the submission. If a change would make it false,
-that change breaks the verification, not just a comment.
+The scope description tells Google document content is never stored — that is
+true today (`jobs` holds `doc_id`, `total_chars` and status, never text) and it
+is the strongest claim in the submission. If a change would make it false, that
+change breaks the submission, not just a comment.
 
-`npm run launch:check -w server` is the gate before submitting: stricter than
-the boot check, and it fails while the legal identity variables are unset.
+`npm run launch:check -w server` is the gate before going live: stricter than
+the boot check, and it fails while the legal identity or Picker variables are
+unset.
 
 ## Working conventions
 

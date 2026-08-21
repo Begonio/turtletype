@@ -16,7 +16,7 @@ const AUTH_ERRORS: Record<string, string> = {
     '(unsafe) to carry on.',
   session_failed: 'We could not start a session. Check that cookies are enabled and try again.',
   missing_permission:
-    'Almost there — on the Google screen you need to tick the box for “See, edit, create and delete all your Google Docs documents”. ' +
+    'Almost there — on the Google screen you need to tick the box for “See, edit, create and delete only the specific Google Drive files you use with this app”. ' +
     'Google requires that to be checked by hand and will not pre-select it. Without it TurtleType cannot write anything.',
 };
 
@@ -246,15 +246,16 @@ export default function Landing() {
             </div>
             <div className="bg-ink-900 p-6">
               <dt className="text-base font-medium text-ink-100">
-                Permission to see, edit, create and delete your Google Docs documents
+                Permission to open only the specific documents you choose
               </dt>
               <dd className="mt-2 max-w-3xl text-sm leading-relaxed text-ink-400">
                 This is what lets TurtleType write into your document. We use it for exactly two
-                things: inserting the text you gave us into the document you nominated, and reading
-                that document's current length so the text is added at the end instead of over the
-                top of what is already there. Google words this permission broadly because it is a
-                single, all-or-nothing permission for Docs — there is no narrower version we can ask
-                for that still reaches a document you paste a link to.
+                things: inserting the text you gave us into the document you chose, and reading that
+                document's current length so the text is added at the end instead of over the top of
+                what is already there. It is a per-file permission: it reaches documents TurtleType
+                created for you, plus any document you hand over through Google's own file picker,
+                and nothing else in your Drive. Pasting a link is not enough on its own — Google
+                asks you to confirm each document, which is the point.
               </dd>
             </div>
             <div className="bg-ink-900 p-6">
@@ -272,8 +273,9 @@ export default function Landing() {
             <p className="text-ink-200">What TurtleType never does with that access:</p>
             <ul className="ml-5 list-disc space-y-2 text-ink-400">
               <li>
-                It never opens a document you did not point it at — not to read it, list it, or
-                anything else.
+                It never opens a document you did not choose — not to read it, list it, or anything
+                else. Google enforces this, not just our good intentions: the permission we hold
+                does not reach the rest of your Drive.
               </li>
               <li>
                 It never stores the text you submit. That text is held in memory only while your job

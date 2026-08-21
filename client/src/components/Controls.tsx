@@ -11,6 +11,10 @@ export default function Controls() {
   const estimating = useJobStore((state) => state.estimating);
   const docMode = useJobStore((state) => state.docMode);
   const docUrlInput = useJobStore((state) => state.docUrlInput);
+  const pickedDoc = useJobStore((state) => state.pickedDoc);
+  const pickerBusy = useJobStore((state) => state.pickerBusy);
+  const pickerError = useJobStore((state) => state.pickerError);
+  const pickerAvailable = useJobStore((state) => state.pickerAvailable);
   const text = useJobStore((state) => state.text);
   const phase = useJobStore((state) => state.phase);
   const error = useJobStore((state) => state.error);
@@ -22,10 +26,14 @@ export default function Controls() {
   const setDurationMs = useJobStore((state) => state.setDurationMs);
   const setDocMode = useJobStore((state) => state.setDocMode);
   const setDocUrlInput = useJobStore((state) => state.setDocUrlInput);
+  const chooseDoc = useJobStore((state) => state.chooseDoc);
+  const clearPickedDoc = useJobStore((state) => state.clearPickedDoc);
   const startJob = useJobStore((state) => state.startJob);
 
   const locked = isActive(phase);
-  const missingDoc = docMode === 'existing' && !docUrlInput.trim();
+  // A link in the box is not a document: under Google's per-file permission
+  // only the picker can actually grant access, so that is what gates the button.
+  const missingDoc = docMode === 'existing' && !pickedDoc;
   const hasEstimate = minDurationMs > 0;
   // Priced but unaffordable. The server decides for real; this only avoids
   // sending a request that is already known to be refused.
@@ -138,18 +146,77 @@ export default function Controls() {
 
         {docMode === 'existing' ? (
           <div className="mt-3">
-            <input
-              type="text"
-              value={docUrlInput}
-              onChange={(event) => setDocUrlInput(event.target.value)}
-              placeholder="https://docs.google.com/document/d/…"
-              aria-label="Google Doc URL"
-              className="w-full rounded-lg border border-ink-700 bg-ink-850 px-3 py-2.5 font-mono text-xs text-ink-200 placeholder:text-ink-600 focus:border-accent-600/60 focus:outline-none"
-            />
-            <p className="mt-2 text-xs leading-relaxed text-ink-400">
-              Text is appended to the end of the document. Paste the full URL or just the document
-              ID.
-            </p>
+            {pickedDoc ? (
+              <div className="rounded-lg border border-accent-600/40 bg-accent-600/10 px-3 py-3">
+                <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-ink-400">
+                  Writing into
+                </p>
+                <p className="mt-1 truncate text-sm text-ink-200" title={pickedDoc.name}>
+                  {pickedDoc.name}
+                </p>
+                <div className="mt-2 flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => void chooseDoc()}
+                    disabled={pickerBusy}
+                    className="font-mono text-[10px] text-ink-300 underline underline-offset-2 transition hover:text-ink-100 disabled:opacity-50"
+                  >
+                    {pickerBusy ? 'opening…' : 'choose another'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={clearPickedDoc}
+                    className="font-mono text-[10px] text-ink-400 underline underline-offset-2 transition hover:text-ink-200"
+                  >
+                    clear
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <input
+                  type="text"
+                  value={docUrlInput}
+                  onChange={(event) => setDocUrlInput(event.target.value)}
+                  placeholder="https://docs.google.com/document/d/…"
+                  aria-label="Google Doc URL"
+                  className="w-full rounded-lg border border-ink-700 bg-ink-850 px-3 py-2.5 font-mono text-xs text-ink-200 placeholder:text-ink-600 focus:border-accent-600/60 focus:outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => void chooseDoc()}
+                  disabled={pickerBusy || !pickerAvailable}
+                  className="mt-2 w-full rounded-lg border border-ink-700 bg-ink-850 px-3 py-2.5 text-sm text-ink-200 transition hover:border-ink-600 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {pickerBusy
+                    ? 'Opening Google Drive…'
+                    : docUrlInput.trim()
+                      ? 'Open this doc in Google Drive →'
+                      : 'Choose from Google Drive →'}
+                </button>
+              </>
+            )}
+
+            {pickerAvailable ? (
+              <p className="mt-2 text-xs leading-relaxed text-ink-400">
+                {pickedDoc
+                  ? 'Text is appended to the end of this document.'
+                  : 'Google asks you to confirm each document you share with TurtleType, so a link ' +
+                    'alone is not enough — paste one and we will take you straight to it, or browse ' +
+                    'your Drive.'}
+              </p>
+            ) : (
+              <p className="mt-2 text-xs leading-relaxed text-ink-400">
+                This deployment has no Google Drive picker configured, so existing documents cannot
+                be reached. Create a new document instead.
+              </p>
+            )}
+
+            {pickerError ? (
+              <p className="mt-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2.5 text-xs leading-relaxed text-red-200">
+                {pickerError}
+              </p>
+            ) : null}
           </div>
         ) : null}
       </fieldset>
@@ -199,7 +266,7 @@ export default function Controls() {
       </button>
 
       {missingDoc && !locked ? (
-        <p className="-mt-4 text-xs text-ink-400">Paste a Google Doc link to continue.</p>
+        <p className="-mt-4 text-xs text-ink-400">Choose a Google Doc to continue.</p>
       ) : null}
     </aside>
   );

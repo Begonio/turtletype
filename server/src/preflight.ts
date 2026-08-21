@@ -1,5 +1,5 @@
 import { assertRequiredEnv, REQUIRED_ENV } from './config.js';
-import { launchReport, legalReport } from './launchChecks.js';
+import { googleReport, launchReport, legalReport } from './launchChecks.js';
 
 /**
  * Environment check that runs before anything else is constructed.
@@ -39,6 +39,12 @@ if (process.env.NODE_ENV !== 'test') {
   // treats the same list as errors — run it before submitting to Google.
   if (isProduction) {
     for (const problem of legalReport(process.env)) {
+      console.warn(`[boot] WARNING ${problem.subject}: ${problem.detail}`);
+    }
+    // Same trade-off: a deploy that cannot open the Picker still writes into
+    // documents it creates, and taking it down over a missing API key would
+    // cost more than the path it disables.
+    for (const problem of googleReport(process.env)) {
       console.warn(`[boot] WARNING ${problem.subject}: ${problem.detail}`);
     }
   }

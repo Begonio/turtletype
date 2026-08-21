@@ -61,12 +61,18 @@ export function errorHandler(
     });
     return;
   }
+  // Under `auth/drive.file` these two mean something narrower than they used
+  // to. The app can only see documents it created or that were handed to it
+  // through the Google Picker, so a document that plainly exists still answers
+  // 404 until it has been picked — and "check the link" would send the user
+  // looking for a typo that is not there.
   if (googleStatus === 403 || googleStatus === 404) {
     res.status(googleStatus).json({
       error:
         googleStatus === 403
           ? 'No permission to edit that document. Make sure the signed-in account has edit access.'
-          : 'That document could not be found. Check the link and try again.',
+          : 'TurtleType cannot reach that document. Choose it with the Google Drive picker so ' +
+            'Google grants access to that one file.',
       code: 'DOC_ACCESS',
     });
     return;

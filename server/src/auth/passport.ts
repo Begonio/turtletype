@@ -53,6 +53,9 @@ export function configurePassport(): void {
             accessToken,
             refreshToken: refreshToken ?? null,
             tokenExpiry: new Date(Date.now() + expiresIn * 1000),
+            // Stored so a later request can tell whether this grant
+            // predates the drive.file migration without asking Google.
+            grantedScopes: params?.scope ?? null,
           });
 
           // One-time welcome credit, so the revision history can be seen
