@@ -138,6 +138,14 @@ export function Privacy() {
             not read, index, analyse, or store the contents of any document.
           </li>
           <li>
+            <span className="text-ink-200">
+              Access to the specific files you select with this app
+            </span>{' '}
+            — used only by the Google file picker, so you can choose a document instead of pasting
+            its link. The picker runs inside Google and returns only the file you select.
+            TurtleType never requests a listing of your Drive.
+          </li>
+          <li>
             <span className="text-ink-200">An offline refresh token</span> — required because a job
             deliberately runs for hours after you close the tab. Without it, a job would stop the
             moment your access token expired.

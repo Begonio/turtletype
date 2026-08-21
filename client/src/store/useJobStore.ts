@@ -1,6 +1,13 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { ApiError, api, loginUrl, streamUrl, type CurrentUser, type JobStatus } from '../lib/api';
+import {
+  PickerError,
+  pickDocument,
+  preloadPicker,
+  type PickedDoc,
+  type PickerConfig,
+} from '../lib/googlePicker';
 
 export type Phase = 'idle' | 'starting' | JobStatus;
 export type DocMode = 'new' | 'existing';
@@ -43,6 +50,13 @@ interface JobStore {
   previewDropped: number;
   docMode: DocMode;
   docUrlInput: string;
+  /** The document chosen through the Google Picker, if one was. */
+  selectedDoc: PickedDoc | null;
+  /** Picker settings from the server. null until /api/public-config answers. */
+  pickerConfig: PickerConfig | null;
+  pickerAvailable: boolean;
+  pickerBusy: boolean;
+  pickerError: string | null;
 
   // -- live job --------------------------------------------------------
   jobId: string | null;
@@ -68,6 +82,9 @@ interface JobStore {
   refreshEstimate: () => void;
   setDocMode: (mode: DocMode) => void;
   setDocUrlInput: (value: string) => void;
+  /** Opens the Google Picker and remembers what came back. */
+  chooseDoc: () => Promise<void>;
+  clearSelectedDoc: () => void;
   startJob: () => Promise<void>;
   pauseJob: () => Promise<void>;
   resumeJob: () => Promise<void>;
@@ -146,6 +163,11 @@ export const useJobStore = create<JobStore>()(
       previewDropped: 0,
       docMode: 'new',
       docUrlInput: '',
+      selectedDoc: null,
+      pickerConfig: null,
+      pickerAvailable: false,
+      pickerBusy: false,
+      pickerError: null,
 
       jobId: null,
       docUrl: null,
@@ -168,6 +190,25 @@ export const useJobStore = create<JobStore>()(
           void api
             .catalog()
             .then(({ enabled }) => set({ billingEnabled: enabled }))
+            .catch(() => {});
+          // Whether this deploy can open the Google Picker. Fetched here so
+          // the scripts can be warmed up before the user clicks: requesting a
+          // token opens a popup, and browsers only permit that while the click
+          // that caused it is still recent.
+          void api
+            .publicConfig()
+            .then(({ picker }) => {
+              if (!picker?.enabled) return;
+              set({
+                pickerAvailable: true,
+                pickerConfig: {
+                  clientId: picker.clientId,
+                  apiKey: picker.apiKey,
+                  appId: picker.appId,
+                },
+              });
+              preloadPicker();
+            })
             .catch(() => {});
         } catch {
           set({ user: null, authChecked: true });
@@ -253,12 +294,51 @@ export const useJobStore = create<JobStore>()(
         }, ESTIMATE_DEBOUNCE_MS);
       },
 
-      setDocMode: (docMode) => set({ docMode }),
-      setDocUrlInput: (docUrlInput) => set({ docUrlInput }),
+      setDocMode: (docMode) => set({ docMode, pickerError: null }),
+      // Typing a link is an explicit choice of a different document, so it
+      // supersedes whatever the picker returned earlier.
+      setDocUrlInput: (docUrlInput) =>
+        set({ docUrlInput, ...(docUrlInput.trim() ? { selectedDoc: null } : {}) }),
+
+      /**
+       * Opens Google's own file chooser.
+       *
+       * Failure here is never fatal: the paste-a-link field is still on the
+       * screen, so anything that goes wrong is reported as a sentence next to
+       * the button rather than a dead end.
+       */
+      async chooseDoc() {
+        const { pickerConfig, pickerBusy } = get();
+        if (!pickerConfig || pickerBusy) return;
+
+        set({ pickerBusy: true, pickerError: null });
+        try {
+          const doc = await pickDocument(pickerConfig);
+          // A closed picker is a decision to pick nothing, not an error, and
+          // it must not clear a document already chosen.
+          if (doc) set({ selectedDoc: doc, docUrlInput: '', error: null });
+        } catch (error) {
+          set({
+            pickerError:
+              error instanceof PickerError
+                ? error.message
+                : 'The picker could not be opened. Paste a link instead.',
+          });
+        } finally {
+          set({ pickerBusy: false });
+        }
+      },
+
+      clearSelectedDoc: () => set({ selectedDoc: null, pickerError: null }),
 
       async startJob() {
-        const { text, durationMs, docMode, docUrlInput } = get();
+        const { text, durationMs, docMode, docUrlInput, selectedDoc } = get();
         if (!text.trim() || get().phase === 'starting') return;
+
+        // A picked document wins over the paste field: it is the more recent
+        // choice whenever both are set, and it is already a bare ID the server
+        // does not have to parse out of a URL.
+        const targetDoc = selectedDoc?.id ?? docUrlInput.trim();
 
         get().detachStream();
         set({
@@ -284,7 +364,7 @@ export const useJobStore = create<JobStore>()(
             text,
             // Omitted means "run at the natural minimum", which the server computes.
             ...(durationMs ? { durationMs } : {}),
-            ...(docMode === 'existing' && docUrlInput.trim() ? { docId: docUrlInput.trim() } : {}),
+            ...(docMode === 'existing' && targetDoc ? { docId: targetDoc } : {}),
           });
 
           set((state) => ({
@@ -511,6 +591,10 @@ export const useJobStore = create<JobStore>()(
         durationMs: state.durationMs,
         docMode: state.docMode,
         docUrlInput: state.docUrlInput,
+        // Worth keeping for the same reason as the pasted link: a refresh
+        // should not send the user back through the picker. The grant behind
+        // it belongs to the account, not the tab.
+        selectedDoc: state.selectedDoc,
         jobId: TERMINAL.includes(state.phase) ? null : state.jobId,
       }),
     },

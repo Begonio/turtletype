@@ -230,7 +230,7 @@ export default function Landing() {
             Why TurtleType asks for access to your Google account
           </h2>
           <p className="mt-4 max-w-3xl text-base leading-relaxed text-ink-300">
-            Signing in asks for three things. Each one is needed for the app to do what it says, and
+            Signing in asks for four things. Each one is needed for the app to do what it says, and
             nothing else is requested.
           </p>
 
@@ -259,6 +259,17 @@ export default function Landing() {
             </div>
             <div className="bg-ink-900 p-6">
               <dt className="text-base font-medium text-ink-100">
+                Permission to open the specific files you choose with this app
+              </dt>
+              <dd className="mt-2 max-w-3xl text-sm leading-relaxed text-ink-400">
+                This is what powers the “choose a document” button, which opens Google's own file
+                picker so you can select a doc instead of hunting for its link. The picker runs
+                inside Google and hands us nothing but the one file you click — we cannot see the
+                rest of your Drive, and we never ask Google for a list of your files.
+              </dd>
+            </div>
+            <div className="bg-ink-900 p-6">
+              <dt className="text-base font-medium text-ink-100">
                 Permission to keep working while you are away
               </dt>
               <dd className="mt-2 max-w-3xl text-sm leading-relaxed text-ink-400">
@@ -273,7 +284,8 @@ export default function Landing() {
             <ul className="ml-5 list-disc space-y-2 text-ink-400">
               <li>
                 It never opens a document you did not point it at — not to read it, list it, or
-                anything else.
+                anything else. Browsing happens inside Google's own picker; TurtleType never asks
+                Google for a list of your files.
               </li>
               <li>
                 It never stores the text you submit. That text is held in memory only while your job

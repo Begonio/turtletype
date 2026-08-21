@@ -37,5 +37,12 @@ publicConfigRouter.get('/public-config', (_req, res) => {
      * to meet, rather than letting it read as a malware warning.
      */
     oauthVerified: config.google.appVerified,
+    /**
+     * What the browser needs to open the Google Picker. All three values are
+     * public — the Picker runs client-side and Google requires them there —
+     * but they are served rather than compiled in so that changing the API key
+     * is a platform setting rather than a client rebuild.
+     */
+    picker: config.google.picker,
   });
 });
