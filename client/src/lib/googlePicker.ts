@@ -234,13 +234,34 @@ async function getAccessToken(config: PickerConfig): Promise<string> {
       error_callback?: (error: { type?: string }) => void;
     };
     client.error_callback = (error) => {
-      // popup_closed and popup_failed_to_open both mean the user never made a
-      // choice, which is a cancel rather than a fault.
+      if (error.type === 'popup_failed_to_open') {
+        reject(
+          new PickerError(
+            'Your browser blocked Google’s permission popup. Allow popups for this site, or paste a link instead.',
+            'declined',
+          ),
+        );
+        return;
+      }
+
+      // Everything else arrives as `popup_closed`, and two very different
+      // things produce it: the user shut the window, or Google refused the
+      // request and showed its own error page inside it, which the user then
+      // shut. The library reports them identically, so the message has to
+      // cover both — and the developer gets the specific diagnosis in the
+      // console, because the misconfiguration behind the second case is
+      // invisible from the app.
+      console.warn(
+        '[picker] Google closed the token popup without issuing a token. If an ' +
+          '"Access blocked / no registered origin / 401 invalid_client" page appeared, ' +
+          `add this page's origin (${window.location.origin}) to Authorized JavaScript ` +
+          'origins on the OAuth client in Google Cloud Console — that is a different ' +
+          'field from the redirect URI used for sign-in, and it is empty by default.',
+      );
       reject(
         new PickerError(
-          error.type === 'popup_failed_to_open'
-            ? 'Your browser blocked Google’s permission popup. Allow popups for this site, or paste a link instead.'
-            : 'Permission was not granted, so the picker could not open.',
+          'The Google window closed before a document was chosen. If it showed an ' +
+            'error, this site’s Google setup needs fixing — paste a link instead for now.',
           'declined',
         ),
       );
