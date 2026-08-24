@@ -254,10 +254,19 @@ entry again. The Picker additionally needs a browser API key in
 as an HTTP referrer — and it needs the app's origin listed under *Authorized
 JavaScript origins* on the OAuth client.
 
-That last one catches everybody, because sign-in keeps working while the picker
-does not. Server-side OAuth validates a **redirect URI**; a token requested from
-the browser validates an **origin**, and they are separate fields on the same
-client. An unregistered origin fails with `no registered origin` and
+That last one catches everybody, twice over.
+
+First, because sign-in keeps working while the picker does not: server-side
+OAuth validates a **redirect URI**; a token requested from the browser
+validates an **origin**, and they are separate fields on the same client.
+
+Second, because the API key has a *Website restrictions* list of its own that
+looks like the same setting and is not — it restricts the key, and does nothing
+for the OAuth client. Both are worth setting; only the OAuth client's origins
+list clears a 401. On the Credentials page they are in two different tables:
+*API Keys*, then *OAuth 2.0 Client IDs* below it. The client you want is the
+one showing a client secret and both authorised-origin and authorised-redirect
+fields. An unregistered origin fails with `no registered origin` and
 `Error 401: invalid_client` — which reads like a broken client ID and is
 nothing of the sort. Register the origin the browser is actually on, scheme and
 port included and no trailing slash: `https://type.turtlegames.org` in
