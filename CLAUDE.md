@@ -38,8 +38,8 @@ Monorepo, npm workspaces, `server/` + `client/`, TypeScript throughout, ESM.
 
 **Billing (`server/src/billing/`)**
 - Stripe Checkout (packs + one subscription) and the hosted billing portal
-- Credits: **1 credit = 5 hours of typing** = 7,700 chars at the planner's measured ~1,540 chars/hour. Priced per job by length and charged on submission, in steps of **0.01 credits** (~77 chars), rounded up, never free
-- `CHARS_PER_CREDIT` is derived from the five-hour definition, not chosen. `credits.test.ts` runs the real planner over one credit's worth of text and fails if it no longer takes about five hours — same discipline as `whatYouGet.ts` on the pricing page
+- Credits: **1 credit = 3 hours of typing** = 5,490 chars at the planner's measured ~1,830 chars/hour. Priced per job by length and charged on submission, in steps of **0.01 credits** (~55 chars), rounded up, never free
+- `CHARS_PER_CREDIT` is derived from the three-hour definition, not chosen. `credits.test.ts` runs the real planner over one credit's worth of text and fails if it no longer takes about three hours — same discipline as `whatYouGet.ts` on the pricing page
 - Fractional credits mean `users.credits`, `credit_ledger.delta/balance_after` and `jobs.credits_spent` are `NUMERIC(12, 2)`, and `db/pool.ts` registers a type parser so they arrive as numbers rather than strings
 - `credit_ledger` is the source of truth; `users.credits` is a cache of it
 - Off entirely unless both `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` are set — except in production, where `launchChecks.ts` refuses to boot a deploy that cannot bill (`ALLOW_FREE_MODE=true` opts out deliberately)

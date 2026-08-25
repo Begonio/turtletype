@@ -391,9 +391,9 @@ origin and `NODE_ENV=production`; the session cookie automatically switches to
 
 ## Billing
 
-Jobs are paid for in credits: **one credit is five hours of typing**, which at the planner's
-measured pace of about 1,540 characters an hour is 7,700 characters. Jobs are priced by length and
-charged in steps of **0.01 credits** — roughly 77 characters — so a short note costs a few
+Jobs are paid for in credits: **one credit is three hours of typing**, which at the planner's
+measured pace of about 1,830 characters an hour is 5,490 characters. Jobs are priced by length and
+charged in steps of **0.01 credits** — roughly 55 characters — so a short note costs a few
 hundredths rather than a whole credit, rounded up to the next hundredth and never free. The price is
 fixed and charged when the job is submitted. Packs never expire; there is also one monthly plan.
 Stripe Checkout takes the money and Stripe's hosted portal handles cards, invoices and cancellation,

@@ -168,6 +168,13 @@ export interface PublicConfig {
     apiKey: string;
     appId: string;
   };
+  /**
+   * Whether this deploy stops a gap as soon as it sees Google record the
+   * revision, instead of waiting the planner's worst case out. False on a
+   * deploy that has switched the behaviour off, in which case the composer
+   * must not advertise it.
+   */
+  confirmsCheckpoints: boolean;
 }
 
 export interface JobSnapshot {

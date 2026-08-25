@@ -9,7 +9,7 @@
  * character dissertation cost the same while differing sixtyfold in what they
  * occupy.
  *
- * One credit is five hours of typing — see `config.billing.charsPerCredit` for
+ * One credit is three hours of typing — see `config.billing.charsPerCredit` for
  * where that number comes from and `credits.test.ts` for the test that stops
  * it drifting away from what the planner actually does. Charges are priced to
  * the hundredth of a credit, so the rounding is worth a few characters rather

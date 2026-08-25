@@ -110,11 +110,11 @@ STRIPE_PRICE_PLAN_MONTHLY=price_...
 ```
 
 Three optional ones, all with sensible defaults — see `.env.example`:
-`CHARS_PER_CREDIT` (9150), `SIGNUP_GRANT_CREDITS` (1), `MAX_CREDITS_PER_JOB`
-(22).
+`CHARS_PER_CREDIT` (5490), `SIGNUP_GRANT_CREDITS` (1), `MAX_CREDITS_PER_JOB`
+(37).
 
-One credit is **five hours of typing**, which at the planner's measured pace of
-about 1,830 characters an hour is 9,150 characters. Five hours of *planned*
+One credit is **three hours of typing**, which at the planner's measured pace of
+about 1,830 characters an hour is 5,490 characters. Three hours of *planned*
 typing: a job that can confirm its revisions against Drive finishes well inside
 that, but how far inside depends on how quickly Google checkpoints on the day,
 which is not something to price against. That is the number to
@@ -125,7 +125,7 @@ a customer pays for the length they actually submitted rather than rounding up
 to a whole credit.
 
 **Do not change `CHARS_PER_CREDIT` on a live deploy with credits outstanding.**
-It reprices every future job, so a customer who bought expecting 9,150
+It reprices every future job, so a customer who bought expecting 5,490
 characters per credit silently gets less. If you must change it, honour the old
 rate for existing balances or grant the difference.
 

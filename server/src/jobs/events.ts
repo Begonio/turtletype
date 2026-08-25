@@ -20,6 +20,16 @@ export type JobEvent =
       remainingMs?: number;
       /** True during a between-burst gap, when nothing is being written. */
       resting: boolean;
+      /**
+       * Gaps this job has ended early because it saw Google record the
+       * revision, rather than waiting the planner's worst case out.
+       *
+       * Sent so the panel can show the speed-up as something that is happening
+       * rather than something that was promised. Zero on a job whose document
+       * does not expose its revision history, which is exactly the case where
+       * a promise would have been wrong.
+       */
+      checkpointsConfirmed: number;
       ops: WireOp[];
     }
   | { type: 'status'; status: JobStatus; docUrl?: string | null }
