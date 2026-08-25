@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import dotenv from 'dotenv';
 import { resolvePickerConfig, type PickerSettings } from './auth/pickerConfig.js';
+import { DEFAULT_MIN_CHUNK_REST_MS } from './jobs/humanize.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -165,6 +166,12 @@ export const config = {
      */
     docsRootUrl: process.env.GOOGLE_DOCS_ROOT_URL,
     /**
+     * Override for the Drive API base URL, used to read a document's revision
+     * list. Unset in production; the integration tests point it at a local
+     * fake alongside the Docs one.
+     */
+    driveRootUrl: process.env.GOOGLE_DRIVE_ROOT_URL,
+    /**
      * Google Picker settings, served to the browser at runtime.
      *
      * `GOOGLE_PICKER_API_KEY` is a browser API key from the same Cloud project
@@ -199,9 +206,14 @@ export const config = {
      * Shortest gap between writing bursts. Google Docs folds edits that happen
      * close together into a single revision, so a document written with no
      * gaps shows up in version history as one entry — identical to a paste.
-     * A minute is enough for Docs to record each burst separately.
+     *
+     * Defaulted from the planner's own constant rather than repeated as a
+     * literal. The two had already drifted apart once: the engine's floor was
+     * retuned and this stayed at the old figure, so the retune reached the
+     * tests and never reached production, where this value is always passed
+     * explicitly. Deriving it means a pacing change lands in one place.
      */
-    minChunkRestMs: num('MIN_CHUNK_REST_MS', 150_000),
+    minChunkRestMs: num('MIN_CHUNK_REST_MS', DEFAULT_MIN_CHUNK_REST_MS),
     /**
      * How much text lands in one burst. Roughly one version-history entry per
      * burst, so smaller values give a more granular history at the cost of a
@@ -211,6 +223,32 @@ export const config = {
     maxChunkChars: num('BURST_MAX_CHARS', 150),
     /** Longest a single job may be stretched over. */
     maxJobDurationMs: num('MAX_JOB_DURATION_MS', 24 * 60 * 60 * 1_000),
+    /**
+     * Whether a job may end a checkpoint gap early once it has *seen* Google
+     * Docs record the revision that gap was waiting for.
+     *
+     * This is where most of a job's wall clock goes. The planner cannot read
+     * Docs' checkpoint clock, so it sizes every gap to contain a checkpoint
+     * under the worst phase of that clock — correct, and enormously
+     * pessimistic when the revision has in fact already landed. Polling the
+     * document's revision list turns the assumption into an observation.
+     *
+     * Off makes every gap run its full planned length, which is what the
+     * engine did before revision watching existed. It is a kill switch, not a
+     * tuning knob: leaving it on costs a handful of small Drive reads per gap
+     * and never shortens a gap that has not been confirmed.
+     */
+    confirmCheckpoints: bool('CONFIRM_CHECKPOINTS', true),
+    /**
+     * How often a resting job asks Drive whether the revision has appeared.
+     *
+     * Per job, never shared — the same rule the write limiter follows. Twelve
+     * a minute resolves a gap to within five seconds while staying far inside
+     * Drive's quota even at full job concurrency.
+     */
+    revisionPollsPerMinute: num('REVISION_POLLS_PER_MINUTE', 12),
+    /** Gap between revision polls. Sets how much of a confirmed gap is overshoot. */
+    revisionPollIntervalMs: num('REVISION_POLL_INTERVAL_MS', 5_000),
   },
 
   /**
@@ -262,9 +300,23 @@ export const config = {
      *
      * **One credit is meant to be five hours of typing.** That is the number
      * to reason about; this one is derived from it. The planner writes about
-     * 1,540 characters an hour at current pacing — measured across seeds and
+     * 1,830 characters an hour at current pacing — measured across seeds and
      * document sizes, near enough linear from 1,000 characters up — so five
-     * hours is 7,700 characters.
+     * hours is 9,150 characters.
+     *
+     * It was 7,700 against a pace of 1,540/hour, before the checkpoint margins
+     * were trimmed. Re-deriving it rather than leaving it means a credit still
+     * buys five hours; leaving it would have quietly turned the same money
+     * into four and a quarter. Which of those is right is a pricing decision,
+     * but it is not one to make by omission — the rule this codebase follows
+     * is that the five-hour definition is primary and this number follows it.
+     *
+     * Measured against the planner's own estimate, which is the figure quoted
+     * on the pricing page and the only one knowable when a customer pays. A
+     * job whose document exposes its revision history finishes sooner than
+     * that — see `confirmCheckpoints` — but how much sooner depends on how
+     * quickly Google checkpoints on the day, which is not a thing to price
+     * against.
      *
      * Do not adjust this by feel when pacing changes. `credits.test.ts` runs
      * the real planner over a document of exactly this length and fails if it
@@ -272,7 +324,7 @@ export const config = {
      * `whatYouGet.ts` applies to the pricing page: the figure a customer is
      * charged against has to be one the engine actually produces.
      */
-    charsPerCredit: num('CHARS_PER_CREDIT', 7_700),
+    charsPerCredit: num('CHARS_PER_CREDIT', 9_150),
     /** Credits handed to a new account once, so the revision history can be seen before paying. */
     signupGrantCredits: num('SIGNUP_GRANT_CREDITS', 1),
     /**
@@ -281,10 +333,10 @@ export const config = {
      *
      * Kept at `maxTextLength / charsPerCredit`, so the credit ceiling and the
      * character ceiling bite at the same point and a document is refused for
-     * one clearly stated reason rather than two. 26 credits is 200,200
+     * one clearly stated reason rather than two. 22 credits is 201,300
      * characters against a 200,000 character text limit.
      */
-    maxCreditsPerJob: num('MAX_CREDITS_PER_JOB', 26),
+    maxCreditsPerJob: num('MAX_CREDITS_PER_JOB', 22),
   },
 
   /**

@@ -12,7 +12,7 @@
  * repeat on every request for a public page.
  */
 import { config } from '../config.js';
-import { countBursts, countRepairs, estimateDurationMs, humanize } from '../jobs/humanize.js';
+import { countRepairs, countRevisions, estimateDurationMs, humanize } from '../jobs/humanize.js';
 import { creditsForChars } from './catalog.js';
 
 /**
@@ -54,7 +54,16 @@ export interface ReferencePoint {
   credits: number;
   /** Median planned duration across seeds, at the job's natural minimum pace. */
   durationMs: number;
-  /** Separate writing sittings, which is roughly the number of revisions Docs records. */
+  /**
+   * Revisions Docs should record.
+   *
+   * Counted from the gaps in the plan that clear the checkpoint interval, not
+   * from the number of writing sittings. The two are not the same: a burst
+   * that stalls mid-sentence for longer than the interval is snapshotted
+   * twice, so counting sittings understated the figure by about a third — a
+   * page under-claiming what the engine does, which is the mirror image of the
+   * problem this module exists to prevent.
+   */
   revisions: number;
   /** Mistakes made and corrected later, each of which is its own edit in history. */
   corrections: number;
@@ -92,7 +101,7 @@ export function referencePoints(): ReferencePoint[] {
       words: text.trim().split(/\s+/).length,
       credits: creditsForChars(chars, config.billing.charsPerCredit),
       durationMs: median(plans.map(estimateDurationMs)),
-      revisions: median(plans.map(countBursts)),
+      revisions: median(plans.map(countRevisions)),
       corrections: median(plans.map(countRepairs)),
     };
   });

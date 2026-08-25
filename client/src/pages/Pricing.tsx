@@ -121,7 +121,7 @@ export default function Pricing() {
           <p className="mt-3 max-w-3xl text-sm leading-relaxed text-ink-300">
             TurtleType is not a fast way to get text into a document — copy and paste is, and it is
             free. What you are paying for is the <span className="text-ink-100">time</span>: the
-            document is written in short sittings with real gaps of two to four minutes between
+            document is written in short sittings with real gaps of a couple of minutes between
             them, because that is what makes Google Docs record a separate revision for each one.
             {oneCreditExample ? (
               <>
@@ -131,7 +131,11 @@ export default function Pricing() {
                 <span className="text-ink-100">{formatDuration(oneCreditExample.durationMs)}</span>{' '}
                 from start to finish, and produces {oneCreditExample.revisions} separate revisions.
               </>
-            ) : null}
+            ) : null}{' '}
+            That time is the planned maximum. When Google exposes a document's revision history —
+            which it does for anything TurtleType created for you, or that you picked from your
+            Drive — jobs finish well inside it, because the writing moves on as soon as each
+            revision is recorded instead of waiting out the clock.
           </p>
           <p className="mt-3 max-w-3xl text-sm leading-relaxed text-ink-300">
             You can close the tab — the job runs on our servers — but you cannot make it go faster

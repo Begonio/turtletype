@@ -6,12 +6,13 @@ Writes text into a Google Doc the way a human would type it, instead of pasting.
 
 1. User signs in with Google, pastes text, picks a target duration, and points it at a doc — chosen through the Google Picker, or by pasting a link.
 2. Server plans the whole session upfront in memory: an event sequence of per-character delays, thinking pauses, typos, and deferred corrections.
-3. Types in bursts of ~55-150 characters separated by 150+ second rests (deliberately above the Docs checkpoint interval, so each burst becomes its own revision).
+3. Types in bursts of ~55-150 characters separated by 132+ second rests (deliberately above the Docs checkpoint interval, so each burst becomes its own revision).
 4. Writes about a third of those bursts "laboured" — one long stall mid-burst, so the burst runs past a checkpoint and a revision lands mid-sentence. The rest go down in flow, twenty seconds each.
 5. Plants realistic typos (QWERTY-adjacent slips, transpositions), keeps typing, circles back to fix them a revision or two later.
-6. Streams progress to the browser over SSE with a countdown. Job runs server-side, so the user can close the tab.
+6. Where it can read the document's revision list, it ends each of those gaps as soon as the revision actually lands instead of waiting the assumed interval out — about two thirds off the runtime, with the history identical.
+7. Streams progress to the browser over SSE with a countdown. Job runs server-side, so the user can close the tab.
 
-Typical result on a ~400-char sample: ~7 revisions over 19 minutes, ~54 chars each, with a couple of standalone correction edits.
+Typical result on a ~400-char sample: ~5 revisions, planned at 13 minutes and taking around 4 when revisions can be confirmed, with a couple of standalone correction edits.
 
 ## Stack
 
@@ -23,6 +24,7 @@ Monorepo, npm workspaces, `server/` + `client/`, TypeScript throughout, ESM.
 - `express-session` + `connect-pg-simple`
 - PostgreSQL via `pg` — users, tokens, jobs
 - Google Docs REST API v1 called directly with `fetch` (base URL is env-configurable for integration tests against a fake Docs server)
+- Drive API v3 `revisions.list`, read-only, to observe when Docs actually checkpoints (`docs/revisions.ts`); same env-configurable base URL trick
 - SSE for job progress, with event IDs and `Last-Event-ID` replay
 - Tests: `node:test` + `node:assert`, run via `tsx`
 
@@ -59,8 +61,13 @@ Monorepo, npm workspaces, `server/` + `client/`, TypeScript throughout, ESM.
 - **Never one API call per character or word.** Events accumulate in a buffer and flush as a single `batchUpdate` every 800ms, gated by a token bucket that keeps it under the Docs 60-writes/min/document quota.
 - **`numReplicas: 1` is load-bearing.** The job queue and SSE subscribers live in process memory. A second instance breaks jobs instead of sharing them. Do not casually bump replica count.
 - **Rate limiters are per-job, never shared across users.**
+- **The planner's pacing constants have exactly one home.** `config.ts` defaults `minChunkRestMs` from `DEFAULT_MIN_CHUNK_REST_MS` rather than repeating the number. The two had already drifted apart once — the engine's floor was retuned, this stayed at the old literal, and because production always passes the config value explicitly, the retune reached the tests and never reached a single user.
 - **`humanize.ts` is pure and seedable.** No I/O, deterministic given a seed. This is what makes the engine testable — don't introduce side effects into it. The plan's own wall clock is a counter accumulated as events are emitted, never `Date.now()`.
-- **Timing guarantees are measured, not assumed.** The correction gap is computed from the keystroke that made the typo to the edit that fixes it, and topped up only if the plan still owes time. Don't reintroduce blanket multipliers on rests — that was the old approach and it paid for the same guarantee several times over. `DOCS_CHECKPOINT_MS` is the one place the model's assumption about Docs lives; the tests in `humanize.test.ts` under "version-history structure" pin what must not regress when pacing changes.
+- **Timing guarantees are measured, not assumed.** The correction gap is computed from the keystroke that made the typo to the edit that fixes it, and topped up only if the plan still owes time. Don't reintroduce blanket multipliers on rests — that was the old approach and it paid for the same guarantee several times over. `DOCS_CHECKPOINT_MS` is the one place the model's assumption about Docs lives, and `CHECKPOINT_MARGIN` is the one place the tolerance over it lives; the tests in `humanize.test.ts` under "version-history structure" pin what must not regress when pacing changes.
+- **Runtime is revisions x gap, and nothing else is close.** Every gap in the plan — the between-burst rest and the mid-burst stall alike — is one revision's worth of wall clock, a little over two minutes of it. Keystroke delays and think pauses are rounding error by comparison. So a change that claims to make jobs faster is only real if it removes gaps or shortens them; anything else is worth a percent or two. And gaps cannot be shortened blindly below the checkpoint interval without merging revisions, which is why the *only* two honest levers are confirming checkpoints (below) and burst size (a product decision — see the open issue).
+- **A gap is never cut short on anything but an observed revision.** `docs/revisions.ts` polls Drive during a checkpoint gap and lets the runner continue the moment a new revision appears — a revision after our own flush means the boundary is drawn, so everything typed later necessarily lands in a later one. That is a stronger guarantee than the timer it replaces, because it is observed rather than assumed. Every way of *not* knowing — no `drive.file` grant for that document (the paste-a-link path), Drive erroring, the list exposing nothing — must come back as "no opinion" and run the gap out in full. A false confirmation is a revision boundary that was never drawn, and the job silently stops looking written. The watcher disables itself permanently on 401/403/404 rather than retrying for the life of the job.
+- **Confirmation never overrides a requested duration.** `applyTargetDuration` strips the `checkpoint` marker off any rest it stretches: a job at its natural minimum should finish as soon as the revisions land, but a job the user asked to spread over three hours takes three hours.
+- **The planner's estimate stays blind on purpose.** `estimateDurationMs`, the countdown, `whatYouGet.ts` and the credit unit are all computed from the conservative plan, because that is the only figure knowable before the job runs. Finishing early is a pleasant surprise; quoting early and not delivering is not. Don't "fix" the estimate to assume confirmation.
 - **Credit moves and the ledger row explaining them are written in one transaction.** `users.credits` is a cache of `SUM(credit_ledger.delta)`; `reconcile()` proves they agree.
 - **Credit amounts are never added as floats.** Every arithmetic step goes through `billing/amount.ts`, which converts to whole hundredths, operates on integers, and converts back. `0.1 + 0.2 !== 0.3`, and a balance accumulating that error stops matching its ledger — which is the one thing `reconcile()` exists to check. Pricing ceils via `ceilCreditsFromRatio(chars, charsPerCredit)`, scaling *before* dividing: 539 chars at 7,700/credit is exactly 0.07, but `Math.ceil((539 / 7700) * 100)` is 8 and overcharges — 142 lengths under 200,000 are wrong the other way round. Charging for a job and creating the job row are likewise one transaction.
 - **Billing operations are idempotent via the unique index on `(reason, reference)`**, never via a check-then-act. The index is global, not per-user, so one Stripe session cannot credit two accounts. Idempotency keys are the *payment object* (Checkout session, invoice), not the event id — Stripe emits several events per payment.
@@ -82,9 +89,11 @@ Monorepo, npm workspaces, `server/` + `client/`, TypeScript throughout, ESM.
 
 ## Known open issue
 
-`MAX_TEXT_LENGTH` is 200,000 chars, `MAX_JOB_DURATION_MS` caps jobs at 24 hours. At current pacing, anything over roughly 36,000 characters has a minimum runtime that exceeds the job's own max duration (it was ~26,000 before the pacing work in `humanize.ts`). Still unresolved for genuinely long documents. Flag this if asked to raise the length limit further.
+`MAX_TEXT_LENGTH` is 200,000 chars, `MAX_JOB_DURATION_MS` caps jobs at 24 hours. At current pacing, anything over roughly 44,000 characters has a minimum runtime that exceeds the job's own max duration (~26,000 before the first pacing pass, ~36,000 before the checkpoint margins were trimmed). Still unresolved for genuinely long documents. Flag this if asked to raise the length limit further.
 
-The remaining lever is burst size: duration is essentially `bursts x (burst span + rest)`, and burst size is fixed at 55-150 chars regardless of length, so a 40,000-char document plans 348 revisions. No human produces that in one document — real long documents are written across sessions. Scaling `BURST_MIN_CHARS` / `BURST_MAX_CHARS` up with text length would cut the runtime proportionally, but it trades away history granularity (each revision becomes a bigger lump of new text), so it is a product decision, not a tuning one.
+Confirming checkpoints takes roughly two thirds off the wall clock without touching this, but it does not change the *planned* duration that `MAX_JOB_DURATION_MS` is checked against, and it does nothing at all for a document reached by pasting a link.
+
+The remaining lever is burst size: duration is essentially `bursts x (burst span + rest)`, and burst size is fixed at 55-150 chars regardless of length, so a 40,000-char document plans 452 revisions. No human produces that in one document — real long documents are written across sessions. Scaling `BURST_MIN_CHARS` / `BURST_MAX_CHARS` up with text length would cut the runtime proportionally, but it trades away history granularity (each revision becomes a bigger lump of new text), so it is a product decision, not a tuning one.
 
 ## Google OAuth verification
 

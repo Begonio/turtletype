@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
+  CHECKPOINT_MARGIN,
   countBursts,
   countRepairs,
+  countRevisions,
   DEFAULT_HUMANNESS,
   DOCS_CHECKPOINT_MS,
   estimateDurationMs,
@@ -361,10 +363,28 @@ describe('version-history structure', () => {
 
     assert.ok(gaps.length > 40, `expected plenty of corrections to check, saw ${gaps.length}`);
     const shortest = Math.min(...gaps);
+    // A gap strictly longer than the checkpoint interval contains a checkpoint
+    // whatever the phase of Docs' clock, so correctness is had at 1.0 and
+    // everything above it is tolerance for "roughly two minutes" being rough.
+    // A quarter again is the tolerance this engine commits to; the bound is
+    // written as an absolute rather than in terms of CHECKPOINT_MARGIN so that
+    // retuning the margin has to come past this test rather than through it.
     assert.ok(
-      shortest > DOCS_CHECKPOINT_MS * 1.5,
+      shortest > DOCS_CHECKPOINT_MS * 1.25,
       `a mistake sat for only ${(shortest / 1000).toFixed(0)}s, too close to the ` +
         `${DOCS_CHECKPOINT_MS / 1000}s checkpoint interval to be recorded reliably`,
+    );
+  });
+
+  it('keeps a real margin over the checkpoint interval on every gap', () => {
+    // The margin is the one number standing between "the revision landed" and
+    // "we assumed it did", and it is also the most tempting thing to shave
+    // when a job feels slow. Shaving it to nothing is a different change from
+    // shaving it a little, and this is where that argument has to be had.
+    assert.ok(
+      CHECKPOINT_MARGIN >= 1.1,
+      `a ${CHECKPOINT_MARGIN}x margin leaves no room for Docs' interval being ` +
+        'approximate — confirm revisions instead of trusting a tighter timer',
     );
   });
 

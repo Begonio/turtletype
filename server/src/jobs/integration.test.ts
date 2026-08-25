@@ -21,6 +21,10 @@ process.env.FLUSH_INTERVAL_MS = process.env.FLUSH_INTERVAL_MS ?? '300';
 // Bursts still happen, just seconds apart instead of a minute, so the suite
 // exercises the rest path without taking minutes of wall clock.
 process.env.MIN_CHUNK_REST_MS = process.env.MIN_CHUNK_REST_MS ?? '400';
+// Rests are milliseconds here, so the poll cadence has to shrink with them or
+// a gap would end before it was ever polled.
+process.env.REVISION_POLL_INTERVAL_MS = process.env.REVISION_POLL_INTERVAL_MS ?? '20';
+process.env.REVISION_POLLS_PER_MINUTE = process.env.REVISION_POLLS_PER_MINUTE ?? '100000';
 process.env.GOOGLE_CLIENT_ID ??= 'test-client-id';
 process.env.GOOGLE_CLIENT_SECRET ??= 'test-client-secret';
 process.env.GOOGLE_CALLBACK_URL ??= 'http://localhost:8080/auth/google/callback';
@@ -72,8 +76,47 @@ class FakeDoc {
   }
 }
 
+/**
+ * Stand-in for the Drive revision list the runner watches to decide a
+ * checkpoint gap is over.
+ *
+ * `autoRevisionMs` is Google's half of the bargain: how long after an edit a
+ * new revision appears. Setting it says "Docs checkpointed"; setting
+ * `failWith` to 403 says "this document's revisions are not readable", which
+ * is the paste-a-link case and has to fall back to waiting the gap out.
+ */
+class FakeDrive {
+  revisions: string[] = ['r0'];
+  polls = 0;
+  failWith: number | null = null;
+  /** A revision appears this long after the document is written to. Null = never. */
+  autoRevisionMs: number | null = null;
+  private timer: NodeJS.Timeout | null = null;
+
+  reset(): void {
+    this.revisions = ['r0'];
+    this.polls = 0;
+    this.failWith = null;
+    this.autoRevisionMs = null;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+  }
+
+  /** Driven by every write, the way Docs' own checkpoint clock would be. */
+  noteEdit(): void {
+    if (this.autoRevisionMs === null || this.timer) return;
+    this.timer = setTimeout(() => {
+      this.revisions.push(`r${this.revisions.length}`);
+      this.timer = null;
+    }, this.autoRevisionMs);
+    this.timer.unref?.();
+  }
+}
+
 const doc = new FakeDoc();
+const drive = new FakeDrive();
 let server: http.Server;
+let driveServer: http.Server;
 
 async function startFakeDocsApi(): Promise<string> {
   server = http.createServer((req, res) => {
@@ -102,6 +145,7 @@ async function startFakeDocsApi(): Promise<string> {
           return;
         }
         doc.apply((JSON.parse(raw) as { requests: Array<Record<string, any>> }).requests ?? []);
+        drive.noteEdit();
         send(200, { documentId: 'fake-doc', replies: [] });
         return;
       }
@@ -112,6 +156,26 @@ async function startFakeDocsApi(): Promise<string> {
 
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const { port } = server.address() as AddressInfo;
+  return `http://127.0.0.1:${port}/`;
+}
+
+async function startFakeDriveApi(): Promise<string> {
+  driveServer = http.createServer((_req, res) => {
+    drive.polls += 1;
+    const send = (status: number, payload: unknown): void => {
+      res.writeHead(status, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(payload));
+    };
+
+    if (drive.failWith !== null) {
+      send(drive.failWith, { error: { code: drive.failWith, message: 'no', status: 'DENIED' } });
+      return;
+    }
+    send(200, { revisions: drive.revisions.map((id) => ({ id })) });
+  });
+
+  await new Promise<void>((resolve) => driveServer.listen(0, '127.0.0.1', resolve));
+  const { port } = driveServer.address() as AddressInfo;
   return `http://127.0.0.1:${port}/`;
 }
 
@@ -128,6 +192,7 @@ describe('job runner integration', { skip: databaseUrl ? false : 'DATABASE_URL i
 
   before(async () => {
     process.env.GOOGLE_DOCS_ROOT_URL = await startFakeDocsApi();
+    process.env.GOOGLE_DRIVE_ROOT_URL = await startFakeDriveApi();
 
     const poolModule = await import('../db/pool.js');
     pool = poolModule.pool;
@@ -158,7 +223,9 @@ describe('job runner integration', { skip: databaseUrl ? false : 'DATABASE_URL i
   });
 
   after(async () => {
+    drive.reset();
     if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
+    if (driveServer) await new Promise<void>((resolve) => driveServer.close(() => resolve()));
     if (userId) await query('DELETE FROM users WHERE id = $1', [userId]).catch(() => {});
     if (pool) await pool.end().catch(() => {});
   });
@@ -271,6 +338,125 @@ describe('job runner integration', { skip: databaseUrl ? false : 'DATABASE_URL i
     // exactly as a human would have left it before noticing.
     const hadVisibleMistake = doc.snapshots.some((snapshot) => !longText.startsWith(snapshot));
     assert.ok(hadVisibleMistake, 'no intermediate state contained an uncorrected typo');
+  });
+
+  /**
+   * The change that made jobs bearable, end to end.
+   *
+   * A checkpoint gap is sized for a runner that cannot read Docs' checkpoint
+   * clock: long enough to contain a checkpoint under the worst phase of it.
+   * That wait, once per revision, is most of a job's wall time. When the
+   * revision list is readable the runner does not have to guess — it watches,
+   * and moves on when the revision actually appears.
+   *
+   * Same text, same seed, same plan; the only difference is whether Google
+   * answers the question. That is the whole claim, so it is measured rather
+   * than asserted about.
+   */
+  it('finishes sooner when it can see the revision land, and writes the same text', async (t) => {
+    if (!reachable) return t.skip('Postgres unreachable');
+
+    const longText = `${TEXT} ${TEXT} ${TEXT} ${TEXT}`;
+
+    const runOnce = async (): Promise<number> => {
+      const jobId = await createJobRow(longText.length);
+      const startedAt = Date.now();
+      await new JobRunner({
+        jobId,
+        userId,
+        docId: 'fake-doc',
+        docUrl: null,
+        text: longText,
+        targetDurationMs: 0,
+        humanness: 0,
+        seed: 5,
+      }).run();
+      assert.equal((await jobRow(jobId)).status, 'done');
+      return Date.now() - startedAt;
+    };
+
+    // Blind: the revision list refuses, so every gap runs its planned length.
+    doc.reset();
+    drive.reset();
+    drive.failWith = 403;
+    const blindMs = await runOnce();
+    const blindBody = doc.body;
+
+    // Watching: Docs checkpoints promptly and the runner can see it.
+    doc.reset();
+    drive.reset();
+    drive.autoRevisionMs = 30;
+    const watchedMs = await runOnce();
+
+    assert.equal(doc.body, longText, 'confirmation must not change what gets written');
+    assert.equal(blindBody, longText);
+    assert.ok(drive.polls > 0, 'the watching run never actually polled the revision list');
+    assert.ok(
+      watchedMs < blindMs,
+      `watching took ${watchedMs}ms against ${blindMs}ms blind — no saving at all`,
+    );
+  });
+
+  it('waits out every gap when the revision list is not readable', async (t) => {
+    if (!reachable) return t.skip('Postgres unreachable');
+    // The paste-a-link path: the app holds `documents` for this file but was
+    // never granted `drive.file` for it. Degrading has to mean "exactly the
+    // old behaviour", not "shorter gaps on a hunch".
+    doc.reset();
+    drive.reset();
+    drive.failWith = 403;
+
+    const jobId = await createJobRow(TEXT.length);
+    await new JobRunner({
+      jobId,
+      userId,
+      docId: 'fake-doc',
+      docUrl: null,
+      text: TEXT,
+      targetDurationMs: 0,
+      humanness: 0,
+      seed: 5,
+    }).run();
+
+    assert.equal(doc.body, TEXT);
+    assert.equal((await jobRow(jobId)).status, 'done');
+    // One refusal is enough to know; asking again every few seconds for the
+    // rest of a long job would be noise on someone else's quota.
+    assert.ok(drive.polls <= 2, `kept polling a document that said no ${drive.polls} times`);
+  });
+
+  it('honours a requested duration instead of finishing early on a confirmation', async (t) => {
+    if (!reachable) return t.skip('Postgres unreachable');
+    // Cutting gaps short is for a job running at its natural minimum. A user
+    // who asked for the writing to be spread over a longer window asked for
+    // the wait, and a revision landing early is not a reason to renege.
+    doc.reset();
+    drive.reset();
+    drive.autoRevisionMs = 10;
+
+    const jobId = await createJobRow(TEXT.length);
+    // Comfortably above this text's natural minimum, or the plan would not be
+    // stretched at all and the assertion below would pass without testing
+    // anything.
+    const target = 25_000;
+    const startedAt = Date.now();
+    await new JobRunner({
+      jobId,
+      userId,
+      docId: 'fake-doc',
+      docUrl: null,
+      text: TEXT,
+      targetDurationMs: target,
+      humanness: 0,
+      seed: 5,
+    }).run();
+    const elapsed = Date.now() - startedAt;
+
+    assert.equal(doc.body, TEXT);
+    assert.ok(
+      elapsed > target * 0.85,
+      `asked for ${target}ms, finished in ${elapsed}ms — the stretch was optimised away`,
+    );
   });
 
   it('appends after existing content without disturbing it', async (t) => {
