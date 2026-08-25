@@ -62,7 +62,6 @@ interface TokenResponse {
 
 interface TokenClient {
   requestAccessToken: (overrides?: { prompt?: string }) => void;
-  callback: (response: TokenResponse) => void;
 }
 
 interface PickerDocument {
@@ -179,16 +178,52 @@ export function preloadPicker(): void {
   void loadPickerApi().catch(() => {});
 }
 
-let tokenClient: TokenClient | null = null;
-let tokenClientId: string | null = null;
 let cachedToken: { value: string; expiresAt: number } | null = null;
+
+/**
+ * Whether this browser has ever completed the Drive consent for this app.
+ *
+ * It decides whether the token request may suppress Google's prompt. Kept in
+ * localStorage because the grant belongs to the Google account, not the tab: a
+ * user who consented last week should not be asked again on a page reload.
+ * Wrong in either direction is survivable — a stale true costs one silent
+ * request that fails and re-prompts, a missing true costs one extra click.
+ */
+const GRANTED_KEY = 'turtletype.driveGranted';
+
+function hasGrantedBefore(): boolean {
+  try {
+    return localStorage.getItem(GRANTED_KEY) === 'true';
+  } catch {
+    // Private mode, or storage disabled entirely. Prompting is the safe answer.
+    return false;
+  }
+}
+
+function rememberGrant(granted: boolean): void {
+  try {
+    if (granted) localStorage.setItem(GRANTED_KEY, 'true');
+    else localStorage.removeItem(GRANTED_KEY);
+  } catch {
+    // Not being able to remember only costs an extra consent click.
+  }
+}
+
+/** Longest a token request may sit unanswered before the UI is released. */
+const TOKEN_TIMEOUT_MS = 120_000;
 
 /**
  * A `drive.file` access token for the browser.
  *
- * `prompt: ''` means Google only shows a consent screen when it has to: a user
- * who ticked the Drive box at sign-in never sees a second dialog, and one who
- * skipped it gets asked exactly once, here, where the reason is obvious.
+ * The `prompt` value is the whole subtlety here. Google's default
+ * (`select_account consent`) always asks; `''` asks only if it must — but
+ * "must" is decided before the popup renders, so on an account that has never
+ * granted the scope, `''` produces an account chooser that accepts a click and
+ * then closes with nothing. Consent was required and had been suppressed.
+ *
+ * So the prompt is only suppressed once this browser has seen a grant succeed.
+ * First time through, Google is allowed to ask properly; afterwards the user
+ * gets the silent path they should have.
  */
 async function getAccessToken(config: PickerConfig): Promise<string> {
   const now = Date.now();
@@ -201,52 +236,98 @@ async function getAccessToken(config: PickerConfig): Promise<string> {
   }
 
   return new Promise<string>((resolve, reject) => {
-    // The client is reusable, but not across a config change.
-    if (!tokenClient || tokenClientId !== config.clientId) {
-      tokenClient = oauth2.initTokenClient({
-        client_id: config.clientId,
-        scope: DRIVE_FILE_SCOPE,
-        // Replaced per request below; the library requires one at construction.
-        callback: () => {},
-        error_callback: () => {},
-      });
-      tokenClientId = config.clientId;
-    }
+    // Settled once, by whichever of the three paths below gets there first.
+    // Google's library is not required to call either callback — a popup that
+    // is closed by the operating system reaches neither — and an unsettled
+    // promise here leaves the button disabled with no way back.
+    let settled = false;
+    const finish = (outcome: () => void): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      outcome();
+    };
 
-    tokenClient.callback = (response) => {
-      if (response.error || !response.access_token) {
+    const timer = setTimeout(() => {
+      finish(() =>
         reject(
           new PickerError(
-            'Google did not grant permission to open your documents.',
-            response.error === 'access_denied' ? 'declined' : 'failed',
+            'Google did not answer the permission request. Try again, or paste a link instead.',
+            'failed',
           ),
-        );
-        return;
-      }
-      cachedToken = {
-        value: response.access_token,
-        expiresAt: Date.now() + (response.expires_in ?? 3600) * 1000,
-      };
-      resolve(response.access_token);
-    };
-
-    const client = tokenClient as TokenClient & {
-      error_callback?: (error: { type?: string }) => void;
-    };
-    client.error_callback = (error) => {
-      // popup_closed and popup_failed_to_open both mean the user never made a
-      // choice, which is a cancel rather than a fault.
-      reject(
-        new PickerError(
-          error.type === 'popup_failed_to_open'
-            ? 'Your browser blocked Google’s permission popup. Allow popups for this site, or paste a link instead.'
-            : 'Permission was not granted, so the picker could not open.',
-          'declined',
         ),
       );
-    };
+    }, TOKEN_TIMEOUT_MS);
 
-    tokenClient.requestAccessToken({ prompt: '' });
+    // Built fresh per request rather than reused. `error_callback` is read off
+    // the config object when the client is constructed, so a client built once
+    // and re-pointed later keeps calling whichever handler it was born with —
+    // which silently swallowed every failure.
+    const client = oauth2.initTokenClient({
+      client_id: config.clientId,
+      scope: DRIVE_FILE_SCOPE,
+      callback: (response) => {
+        finish(() => {
+          if (response.error || !response.access_token) {
+            // The recorded grant is evidently not usable; prompt properly next time.
+            rememberGrant(false);
+            reject(
+              new PickerError(
+                'Google did not grant permission to open your documents.',
+                response.error === 'access_denied' ? 'declined' : 'failed',
+              ),
+            );
+            return;
+          }
+          cachedToken = {
+            value: response.access_token,
+            expiresAt: Date.now() + (response.expires_in ?? 3600) * 1000,
+          };
+          rememberGrant(true);
+          resolve(response.access_token);
+        });
+      },
+      error_callback: (error) => {
+        finish(() => {
+          if (error.type === 'popup_failed_to_open') {
+            reject(
+              new PickerError(
+                'Your browser blocked Google’s permission popup. Allow popups for this site, or paste a link instead.',
+                'declined',
+              ),
+            );
+            return;
+          }
+
+          // Otherwise the popup closed without a token. Usually that is the
+          // user shutting it; it is also what a rejected request looks like,
+          // because Google renders its own error page inside the popup. The
+          // library reports both identically, so the message covers both and
+          // the console carries the diagnosis a developer needs.
+          rememberGrant(false);
+          console.warn(
+            '[picker] Google closed the token popup without issuing a token. If an ' +
+              '"Access blocked / no registered origin / 401 invalid_client" page appeared, ' +
+              `add this page's origin (${window.location.origin}) to Authorized JavaScript ` +
+              'origins on the OAuth client in Google Cloud Console — that is a different ' +
+              'field from the redirect URI used for sign-in, and it is empty by default. ' +
+              'If the popup simply closed after choosing an account, the drive.file scope ' +
+              'is likely missing from the OAuth consent screen, or this account is not on ' +
+              'the app’s test-user list while the app is in Testing.',
+          );
+          reject(
+            new PickerError(
+              'The Google window closed before a document was chosen. If it showed an ' +
+                'error, this site’s Google setup needs fixing — paste a link instead for now.',
+              'declined',
+            ),
+          );
+        });
+      },
+    });
+
+    // Suppress the prompt only where suppressing it is safe: see above.
+    client.requestAccessToken(hasGrantedBefore() ? { prompt: '' } : {});
   });
 }
 

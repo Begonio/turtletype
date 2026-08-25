@@ -86,6 +86,9 @@ login only helps if you hit anonymous pull rate limits.)
    # Optional. Enables the Google Picker on the "use an existing doc" option;
    # without it that option asks for a pasted link instead. Browser API key
    # from the same Cloud project, restricted to the Picker API and this domain.
+   # Also add https://type.turtlegames.org to the OAuth client's "Authorized
+   # JavaScript origins" — a separate field from the redirect URI, and without
+   # it the picker fails with "no registered origin / 401 invalid_client".
    GOOGLE_PICKER_API_KEY=<AIza… from Google Cloud Console>
 
    # Required in production — see the note below
