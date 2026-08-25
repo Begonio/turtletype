@@ -56,5 +56,15 @@ publicConfigRouter.get('/public-config', (_req, res) => {
      * deploy will not deliver.
      */
     confirmsCheckpoints: config.jobs.confirmCheckpoints,
+    /**
+     * Whether this deploy can actually send email.
+     *
+     * Served for the same reason as the flag above: the settings panel must
+     * not offer a switch for something that cannot happen. With no mail
+     * provider configured — a laptop, a self-hosted instance — the email
+     * toggles are shown as unavailable and browser notifications, which need
+     * nothing from the server, are the whole feature.
+     */
+    notifications: { email: config.notifications.emailEnabled },
   });
 });

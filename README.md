@@ -309,6 +309,10 @@ Without `DATABASE_URL` those tests skip automatically.
 | `MAX_CONCURRENT_JOBS`  | no       | Jobs replaying at once; the rest queue. Default `20`.          |
 | `MAX_TEXT_LENGTH`      | no       | Rejects longer submissions. Default `200000`.                  |
 | `TRUST_PROXY`          | no       | Set `true` behind a TLS-terminating proxy. Default: on in prod.|
+| `MAIL_API_KEY`         | no       | Mail provider key. Unset: no job emails are sent; browser notifications still work. |
+| `MAIL_FROM`            | no       | Sender address, on a domain verified with the provider. Required alongside the key. |
+| `MAIL_API_URL`         | no       | Send endpoint. Default `https://api.resend.com/emails`.        |
+| `MAIL_REPLY_TO`        | no       | Reply-to. Defaults to `SUPPORT_EMAIL`.                         |
 
 ---
 
@@ -320,6 +324,7 @@ Without `DATABASE_URL` those tests skip automatically.
 | `GET`    | `/auth/google/callback`  | Upserts the user, sets the session, redirects to `/app`.   |
 | `GET`    | `/auth/logout`           | Destroys the session and redirects. `POST` returns JSON.   |
 | `GET`    | `/api/me`                | Current user, or `401`.                                    |
+| `PATCH`  | `/api/me/notifications`  | Any of the four notification switches → the updated user.  |
 | `POST`   | `/api/estimate`          | `{ text }` → minimum duration, burst count, typo count.     |
 | `POST`   | `/api/jobs`              | `{ text, durationMs?, docId? }` → `{ jobId, docUrl }`.      |
 | `GET`    | `/api/jobs`              | Recent jobs for the signed-in user.                        |
@@ -388,6 +393,30 @@ origin and `NODE_ENV=production`; the session cookie automatically switches to
 - **Concurrency.** `MAX_CONCURRENT_JOBS` bounds replays per process; the rest sit in `pending` and
   start automatically as slots free. For horizontal scaling, the in-memory queue would need to move
   to Redis or Postgres advisory locks — SSE would then need sticky sessions or a pub/sub fan-out.
+- **Notifications.** A finished or failed job is announced once, and `jobs.notified_at` is what makes
+  it once: several paths call `finishJob` for the same job, and the sender claims the row with a
+  conditional `UPDATE` before it sends anything. Cancellations are never announced — the person who
+  stopped the job was looking at the button.
+
+## Notifications
+
+Jobs finish when nobody is watching — that is the design — so when one ends the user is told,
+through two channels that cover different absences:
+
+- **Email**, the only one that reaches someone who closed the tab. Off unless `MAIL_API_KEY` and
+  `MAIL_FROM` are both set; sent over the provider's HTTPS API (Resend's shape by default, and
+  `MAIL_API_URL` retargets it), never SMTP.
+- **A browser notification**, the only one that arrives the moment it happens. Raised from the live
+  SSE stream, so it needs the tab open somewhere — background is fine, closed is not. Suppressed
+  while the page is in the foreground, where the progress panel has already said the same thing.
+
+Both are per-outcome: finished and failed are separate switches, so someone can ask to hear only
+about failures. All four default on; the panel under the composer turns them off, and browser
+notifications additionally need the browser's own permission, which is only ever requested from a
+click.
+
+Neither message ever contains any of the document's text — only counts, an outcome and a link to
+the user's own document. `jobs` holds no text to leak, and the OAuth submission says so.
 
 ## Billing
 

@@ -11,6 +11,7 @@ Writes text into a Google Doc the way a human would type it, instead of pasting.
 5. Plants realistic typos (QWERTY-adjacent slips, transpositions), keeps typing, circles back to fix them a revision or two later.
 6. Where it can read the document's revision list, it ends each of those gaps as soon as the revision actually lands instead of waiting the assumed interval out — about two thirds off the runtime, with the history identical.
 7. Streams progress to the browser over SSE with a countdown. Job runs server-side, so the user can close the tab.
+8. Tells the user when it ends — email (reaches a closed tab) and a browser notification (arrives instantly, needs an open one), per outcome, both switchable.
 
 Typical result on a ~400-char sample: ~5 revisions, planned at 13 minutes and taking around 4 when revisions can be confirmed, with a couple of standalone correction edits.
 
@@ -49,6 +50,12 @@ Monorepo, npm workspaces, `server/` + `client/`, TypeScript throughout, ESM.
 - Pricing-page figures come from `whatYouGet.ts`, which runs the real planner — never hardcode a duration or revision count into copy
 - The landing page's price line is derived from the live catalog for the same reason: it used to read "free while in beta", which stayed on the page after it stopped being true
 
+**Notifications (`server/src/notify/`, `client/src/lib/notifications.ts`)**
+- Email on job done/failed, over the provider's HTTPS API called with `fetch` — Resend's shape, `MAIL_API_URL` retargets it (and points the tests at a local fake, same trick as `GOOGLE_DOCS_ROOT_URL`). No SMTP, no new dependency
+- Off unless `MAIL_API_KEY` and `MAIL_FROM` are both set. `policy.ts` and `render.ts` are pure; `mailer.ts` is the only part that touches the network and it never throws
+- Browser notifications come off the existing SSE `done` / `error` events — no service worker, no web push, so they need the tab open somewhere
+- Four preferences on `users` (channel x outcome), patched through `PATCH /api/me/notifications`
+
 **Deploy**
 - Multi-stage Dockerfile (tini, non-root user, healthcheck)
 - Railway, Dockerfile builder, pinned to 1 replica
@@ -76,6 +83,10 @@ Monorepo, npm workspaces, `server/` + `client/`, TypeScript throughout, ESM.
 - **Migrations must stay true no-ops on re-run.** `schema.sql` runs on every boot. A `DROP CONSTRAINT`/`ADD CONSTRAINT` pair looks idempotent but takes ACCESS EXCLUSIVE on the table and re-validates every row each time — concurrently with live row locks, that deadlocks. Guard DDL with `IF NOT EXISTS` or a `pg_constraint` check, and note `migrate()` takes an advisory lock so overlapping deploys queue.
 - **The Stripe webhook route mounts before `express.json`** and takes the raw body — signature verification needs the exact bytes Stripe signed.
 - **Webhooks are the only place credit is created.** A Checkout success URL is just a URL a user can open.
+- **A job is announced exactly once, and `jobs.notified_at` is what makes it once.** Every terminal transition funnels through `finishJob`, and more than one path can fire for the same job — the runner's failure path and the queue's last-resort catch, plus the boot sweep for orphans. Credits survive that because `settleJobCredits` is idempotent; an email has no such property, so `notifyJobFinished` claims the row with a conditional `UPDATE ... WHERE notified_at IS NULL` and does nothing when the claim comes back empty. Never replace that with a check-then-act, and never re-open a claim on a send failure: there is no retry loop to hand it to, and the next `finishJob` would send a duplicate of a message that may well have gone out.
+- **A cancelled job is never announced.** The person who stopped it was looking at the button. `notifiableOutcome` is the one place that decision lives.
+- **A notification never carries the document's text.** Counts, an outcome, and a link to the user's own document — nothing else. The scope justification tells Google reviewers document content is never stored or transmitted, `jobs` deliberately holds no text, and an email is the obvious place for that promise to be broken by accident. `render.test.ts` asserts the input shape has nowhere to put it.
+- **Notifications fail open everywhere, including production.** Unlike billing, a deploy that cannot email is degraded rather than dishonest, so `launchChecks.ts` warns and boots. `sendEmail` returns `false` and logs rather than throwing, and `finishJob` dispatches without awaiting — the document is written and the credits are settled by then, and a slow mail provider must not hold up the SSE `done` event or become an unhandled rejection.
 - **`config.ts` keeps secrets behind getters** so pure modules can be imported in tests without a live database.
 - **Billing fails open in development and closed in production.** `config.billing.enabled` is false with no Stripe keys and the paywall waves jobs through — correct on a laptop, a silent giveaway on the deploy that is meant to charge. `preflight.ts` runs `launchChecks.ts` and exits non-zero in production unless the deploy can bill, and `hasCredits` answers 503 rather than `next()` if it ever finds itself there anyway. Don't "simplify" either back into a plain `next()`.
 - **`launchChecks.ts` is pure** — it reads an env object passed to it, never `process.env` directly, so the launch rules are testable without an environment. Same discipline as `humanize.ts`.

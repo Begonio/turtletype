@@ -49,6 +49,26 @@ END $$;
 CREATE UNIQUE INDEX IF NOT EXISTS users_stripe_customer_idx
   ON users (stripe_customer_id) WHERE stripe_customer_id IS NOT NULL;
 
+-- Where a finished job gets announced.
+--
+-- Four columns rather than one, because the two channels answer different
+-- questions: email is the only one that reaches someone who closed the tab —
+-- which is the normal way to use this service, since a job runs for hours
+-- server-side — and a browser notification is the only one that arrives the
+-- second it happens. Someone who wants to know about failures and not about
+-- successes is a real preference, so the event is a separate axis from the
+-- channel.
+--
+-- Default ON. These are transactional notices about the account holder's own
+-- job, on an address they signed in with, and a job that has been running for
+-- three hours finishing silently is the failure mode worth avoiding. The app
+-- has a visible switch for each one, and browser notifications additionally
+-- cannot fire until the browser's own permission prompt has been accepted.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS notify_email_done      BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS notify_email_failed    BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS notify_browser_done    BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS notify_browser_failed  BOOLEAN NOT NULL DEFAULT TRUE;
+
 -- Every movement of credit, ever. The balance on users is a cache of this
 -- table's sum; the ledger is what makes a disputed charge answerable and what
 -- makes grants idempotent.
@@ -108,6 +128,17 @@ CREATE TABLE IF NOT EXISTS jobs (
 );
 
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS credits_spent NUMERIC(12, 2) NOT NULL DEFAULT 0;
+
+-- When this job's finish notification was claimed, and the reason a job is
+-- only ever announced once.
+--
+-- Several paths mark a job finished — the happy path, the failure path, the
+-- queue's last-resort catch, and the boot sweep that fails jobs a restart
+-- orphaned — and more than one can fire for the same job. Credits survive
+-- that because `settleJobCredits` is idempotent; an email has no such
+-- property, so the sender claims the row first with a conditional UPDATE and
+-- does nothing at all when the claim comes back empty.
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS notified_at TIMESTAMPTZ;
 
 -- Credits are priced to a hundredth, so the columns holding them are NUMERIC
 -- rather than INTEGER. Fresh databases get the right type from the definitions

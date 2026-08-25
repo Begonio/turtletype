@@ -1,6 +1,20 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { ApiError, api, loginUrl, streamUrl, type CurrentUser, type JobStatus } from '../lib/api';
+import {
+  ApiError,
+  api,
+  loginUrl,
+  streamUrl,
+  type CurrentUser,
+  type JobStatus,
+  type NotificationPrefs,
+} from '../lib/api';
+import {
+  notificationPermission,
+  requestNotificationPermission,
+  showJobNotification,
+  type PermissionState,
+} from '../lib/notifications';
 import {
   PickerError,
   pickDocument,
@@ -70,6 +84,18 @@ interface JobStore {
   pickerBusy: boolean;
   pickerError: string | null;
 
+  // -- notifications ---------------------------------------------------
+  /**
+   * Whether this deploy has a mail provider at all. False on a laptop or a
+   * self-hosted instance, where the email switches are shown as unavailable
+   * rather than as settings that quietly do nothing.
+   */
+  emailNotificationsAvailable: boolean;
+  /** The browser's own answer, which no preference here can override. */
+  browserPermission: PermissionState;
+  /** Set when a preference could not be saved, so the panel can say so. */
+  notificationsError: string | null;
+
   // -- live job --------------------------------------------------------
   jobId: string | null;
   docUrl: string | null;
@@ -89,6 +115,10 @@ interface JobStore {
   /** Re-reads the balance after returning from Checkout. */
   refreshCredits: () => Promise<void>;
   signOut: () => Promise<void>;
+  /** Saves one or more notification switches. */
+  setNotificationPrefs: (patch: Partial<NotificationPrefs>) => Promise<void>;
+  /** Asks the browser for permission, then turns the browser switches on. */
+  enableBrowserNotifications: () => Promise<void>;
   setText: (text: string) => void;
   setDurationMs: (durationMs: number | null) => void;
   refreshEstimate: () => void;
@@ -183,6 +213,13 @@ export const useJobStore = create<JobStore>()(
       pickerBusy: false,
       pickerError: null,
 
+      emailNotificationsAvailable: false,
+      // Read once at construction rather than watched. The permission can only
+      // change through the browser's own UI, and every action here that cares
+      // re-reads it.
+      browserPermission: notificationPermission(),
+      notificationsError: null,
+
       jobId: null,
       docUrl: null,
       phase: 'idle',
@@ -211,11 +248,14 @@ export const useJobStore = create<JobStore>()(
           // that caused it is still recent.
           void api
             .publicConfig()
-            .then(({ picker, confirmsCheckpoints }) => {
-              // Set before the picker check below returns early: the two are
-              // independent, and a deploy can confirm checkpoints without
-              // having a Picker API key configured.
-              set({ confirmsCheckpoints: Boolean(confirmsCheckpoints) });
+            .then(({ picker, confirmsCheckpoints, notifications }) => {
+              // Set before the picker check below returns early: these are
+              // independent, and a deploy can confirm checkpoints or send mail
+              // without having a Picker API key configured.
+              set({
+                confirmsCheckpoints: Boolean(confirmsCheckpoints),
+                emailNotificationsAvailable: Boolean(notifications?.email),
+              });
               if (!picker?.enabled) return;
               set({
                 pickerAvailable: true,
@@ -262,6 +302,64 @@ export const useJobStore = create<JobStore>()(
         } finally {
           set({ user: null, jobId: null, phase: 'idle', preview: '' });
         }
+      },
+
+      /**
+       * Saves one or more switches.
+       *
+       * Optimistic, and rolled back on failure. A toggle that waits on a round
+       * trip before moving feels broken, and the only thing this can fail with
+       * is a network error — in which case the switch snapping back, with a
+       * message, is the honest outcome.
+       */
+      async setNotificationPrefs(patch) {
+        const previous = get().user;
+        if (!previous) return;
+
+        set({
+          user: { ...previous, notifications: { ...previous.notifications, ...patch } },
+          notificationsError: null,
+        });
+
+        try {
+          const { user } = await api.updateNotifications(patch);
+          set({ user });
+        } catch (error) {
+          set({
+            user: previous,
+            notificationsError:
+              error instanceof ApiError ? error.message : 'Could not save that setting.',
+          });
+        }
+      },
+
+      /**
+       * Turns browser notifications on, permission and all.
+       *
+       * The order matters: ask the browser first, and only record the
+       * preference if it says yes. Storing "yes please" against a denied
+       * permission would leave a switch that is on and a notification that
+       * never arrives, which is worse than a switch that refuses to move.
+       *
+       * Must be called from a click. Browsers reject a permission prompt with
+       * no user gesture behind it.
+       */
+      async enableBrowserNotifications() {
+        const permission = await requestNotificationPermission();
+        set({ browserPermission: permission });
+        if (permission !== 'granted') {
+          set({
+            notificationsError:
+              permission === 'denied'
+                ? 'Your browser is blocking notifications for this site. Allow them in the ' +
+                  'address bar’s site settings, then try again.'
+                : permission === 'unsupported'
+                  ? 'This browser cannot show notifications.'
+                  : null,
+          });
+          return;
+        }
+        await get().setNotificationPrefs({ browserOnDone: true, browserOnFailure: true });
       },
 
       setText: (text) => {
@@ -551,6 +649,17 @@ export const useJobStore = create<JobStore>()(
             docUrl: data.docUrl ?? state.docUrl,
             notice: null,
           }));
+          // 'cancelled' arrives on this event too, and is deliberately not
+          // announced: the person who stopped the job was looking at the
+          // button when they did it.
+          if (data.status === 'done' && get().user?.notifications.browserOnDone) {
+            showJobNotification({
+              outcome: 'done',
+              charsWritten: data.charsWritten,
+              totalChars: data.totalChars,
+              docUrl: data.docUrl ?? get().docUrl,
+            });
+          }
           get().detachStream();
         });
 
@@ -562,6 +671,16 @@ export const useJobStore = create<JobStore>()(
           if (data) {
             const payload = JSON.parse(data) as { message: string; code?: string };
             set({ phase: 'failed', error: payload.message, notice: null });
+            if (get().user?.notifications.browserOnFailure) {
+              const state = get();
+              showJobNotification({
+                outcome: 'failed',
+                charsWritten: state.charsWritten,
+                totalChars: state.totalChars,
+                docUrl: state.docUrl,
+                message: payload.message,
+              });
+            }
             get().detachStream();
             return;
           }
