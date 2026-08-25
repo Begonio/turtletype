@@ -23,6 +23,16 @@
 /** Per-file access to documents the user hands over through the Picker. */
 const DRIVE_FILE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
 
+/**
+ * Native Google Docs, and nothing else.
+ *
+ * The Docs API can only write to these. A .docx or a PDF sitting in Drive
+ * looks like a document to a person and is not one to `documents.batchUpdate`,
+ * so offering it would produce a job that fails after the user has been
+ * charged for it.
+ */
+const GOOGLE_DOC_MIME = 'application/vnd.google-apps.document';
+
 const GSI_SRC = 'https://accounts.google.com/gsi/client';
 const GAPI_SRC = 'https://apis.google.com/js/api.js';
 
@@ -68,6 +78,7 @@ interface PickerDocument {
   id?: string;
   name?: string;
   url?: string;
+  mimeType?: string;
 }
 
 interface PickerCallbackData {
@@ -86,7 +97,7 @@ interface PickerBuilder {
 }
 
 interface DocsView {
-  setIncludeFolders: (include: boolean) => DocsView;
+  setMimeTypes: (mimeTypes: string) => DocsView;
   setOwnedByMe: (owned: boolean) => DocsView;
   setMode: (mode: unknown) => DocsView;
   setLabel: (label: string) => DocsView;
@@ -343,14 +354,22 @@ export async function pickDocument(config: PickerConfig): Promise<PickedDoc | nu
   }
 
   return new Promise<PickedDoc | null>((resolve, reject) => {
+    // Documents, listed flat. Folders are deliberately absent: this is a
+    // "pick the thing you are writing into" control, not a file manager, and
+    // making someone navigate a directory tree to reach a document is the
+    // chore the picker replaced pasting a URL to avoid. The Picker's own
+    // search box spans the whole Drive regardless of folder.
+    //
     // Two views, because "shared with me" is where a document someone else
     // started — the assignment template, the shared draft — actually lives,
     // and that is the case the paste-a-link field existed for.
     const myDocs = new picker.DocsView(picker.ViewId.DOCUMENTS)
-      .setIncludeFolders(true)
+      .setMimeTypes(GOOGLE_DOC_MIME)
+      .setOwnedByMe(true)
       .setMode(picker.DocsViewMode.LIST)
       .setLabel('My documents');
     const sharedWithMe = new picker.DocsView(picker.ViewId.DOCUMENTS)
+      .setMimeTypes(GOOGLE_DOC_MIME)
       .setOwnedByMe(false)
       .setMode(picker.DocsViewMode.LIST)
       .setLabel('Shared with me');
@@ -373,6 +392,19 @@ export async function pickDocument(config: PickerConfig): Promise<PickedDoc | nu
           const doc = data.docs?.[0];
           if (!doc?.id) {
             reject(new PickerError('Google returned a document with no ID.', 'failed'));
+            return;
+          }
+          // The views above already filter to Google Docs. This catches the
+          // case where they somehow do not, because the alternative is a job
+          // that is charged for and then fails on the first write.
+          if (doc.mimeType && doc.mimeType !== GOOGLE_DOC_MIME) {
+            reject(
+              new PickerError(
+                'That is not a Google Doc. TurtleType can only write into native Google ' +
+                  'Docs — open the file in Docs and save it as one first.',
+                'failed',
+              ),
+            );
             return;
           }
           resolve({
