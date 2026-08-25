@@ -249,7 +249,16 @@ fails with `403 SERVICE_DISABLED` no matter how the consent screen is
 configured. Check it before blaming scopes.
 
 The same applies to the **Google Picker API**, which is a separate library
-entry again. The Picker additionally needs a browser API key in
+entry again. Its symptom is distinctive: the picker opens and then shows
+Google's own dialog reading *"The API developer key is invalid."* That message
+names the key, but a valid key against a project where the Picker API is off
+produces it too — enabling the API is the first thing to check, not the last.
+Three other things produce the same wording: the key's **API restrictions**
+(the section below Application restrictions) not including the Picker API, a
+website-restriction pattern too narrow to match the page making the request
+(prefer `https://your-domain/*` to a bare origin), and a key issued by a
+different Cloud project from the OAuth client, whose project number the Picker
+receives as the app ID. The Picker additionally needs a browser API key in
 `GOOGLE_PICKER_API_KEY` — restrict it to the Picker API and to your own domain
 as an HTTP referrer — and it needs the app's origin listed under *Authorized
 JavaScript origins* on the OAuth client.
