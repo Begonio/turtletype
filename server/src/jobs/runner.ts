@@ -6,7 +6,8 @@ import { DocWriter, getAppendIndex, type DocOp } from '../docs/documents.js';
 import { sleep } from '../docs/rateLimiter.js';
 import { statusOf } from '../docs/backoff.js';
 import { emitJobEvent, type WireOp } from './events.js';
-import { estimateDurationMs, humanize, type HumanEvent } from './humanize.js';
+import { RevisionWatcher } from '../docs/revisions.js';
+import { estimateDurationMs, humanize, type HumanEvent, type PauseEvent } from './humanize.js';
 import { TypingBuffer } from './buffer.js';
 
 export class JobCancelledError extends Error {
@@ -59,6 +60,14 @@ export class JobRunner {
   private cancelled = false;
 
   private writer: DocWriter | null = null;
+  /**
+   * Reads the document's revision list so a checkpoint gap can end when the
+   * revision actually lands instead of when the planner's worst-case timer
+   * runs out. Null when checkpoint confirmation is switched off.
+   */
+  private watcher: RevisionWatcher | null = null;
+  /** Wall-clock time saved by gaps that ended on evidence rather than the clock. */
+  private confirmedSavingMs = 0;
   private startIndex = 1;
   private charsWritten = 0;
   private startedAt = 0;
@@ -137,6 +146,70 @@ export class JobRunner {
     }
   }
 
+  /**
+   * Sits out a gap that exists to let Google Docs close a revision.
+   *
+   * The planner sizes these for a runner that cannot see Docs' checkpoint
+   * clock: long enough to contain a checkpoint under the worst phase of it.
+   * That is most of a job's wall clock, and almost all of it is insurance
+   * against an event that has usually already happened.
+   *
+   * So: wait the floor — a gap still has to *read* as a person stopping to
+   * think, however fast Google is — then watch the document's revision list
+   * and carry on the moment a new revision appears. A new revision after our
+   * own flush means the boundary has been drawn: everything typed from here
+   * necessarily lands in a later one, which is the whole property the long
+   * wait was buying. That also carries the correction guarantee, which is the
+   * same property measured from a mistake instead of from a burst — a typo on
+   * the page before a confirmed boundary is a typo Docs has recorded.
+   *
+   * Every path that is not an observed revision falls back to the full
+   * planned duration, so a document whose revisions we cannot read behaves
+   * exactly as it did before any of this existed.
+   */
+  private async checkpointPause(event: PauseEvent): Promise<void> {
+    const floor = Math.min(event.checkpoint?.minMs ?? event.duration, event.duration);
+    const watcher = this.watcher;
+
+    if (!watcher?.usable) {
+      await this.timedSleep(event.duration);
+      return;
+    }
+
+    const baseline = await watcher.observe(this.controller.signal);
+    if (baseline === null) {
+      await this.timedSleep(event.duration);
+      return;
+    }
+
+    await this.timedSleep(floor);
+    const budget = event.duration - floor;
+    if (budget <= 0) return;
+
+    const waited = await watcher.waitForChange(
+      baseline,
+      budget,
+      config.jobs.revisionPollIntervalMs,
+      this.controller.signal,
+      (ms) => {
+        // The polling loop does its own sleeping, so the countdown has to be
+        // told about each step as it happens rather than at the end.
+        this.planElapsedMs += ms;
+      },
+    );
+
+    if (waited === null) return;
+
+    // The gap is over early. Take the unspent remainder off the plan's total
+    // so the countdown converges on the new finish time instead of stalling at
+    // a figure the job will now beat.
+    const saved = budget - waited;
+    if (saved <= 0) return;
+    this.confirmedSavingMs += saved;
+    this.planTotalMs = Math.max(this.planElapsedMs, this.planTotalMs - saved);
+    await this.emitProgress([]);
+  }
+
   /** Milliseconds of plan left to replay, or null before the plan is known. */
   private remainingMs(): number | null {
     if (this.planTotalMs === 0) return null;
@@ -168,6 +241,7 @@ export class JobRunner {
       const auth = await getAuthorizedClient(userId);
       this.startIndex = await getAppendIndex(auth, docId);
       this.writer = new DocWriter(auth, docId, this.startIndex);
+      this.watcher = config.jobs.confirmCheckpoints ? new RevisionWatcher(auth, docId) : null;
 
       // The whole document is planned up front: pure, in-memory, no I/O.
       const events = humanize(text, {
@@ -194,6 +268,11 @@ export class JobRunner {
       if (this.failure) throw this.failure;
 
       await this.persistProgress(true);
+      // Whether checkpoint confirmation is actually paying off depends on how
+      // quickly Google checkpoints in production, which is exactly the thing
+      // no amount of local testing can answer. Log it per job so the answer is
+      // in the logs rather than in someone's guess.
+      this.logCheckpointOutcome();
       await finishJob(jobId, 'done');
       emitJobEvent(jobId, {
         type: 'done',
@@ -205,6 +284,20 @@ export class JobRunner {
     } catch (error) {
       await this.handleFailure(error);
     }
+  }
+
+  private logCheckpointOutcome(): void {
+    const watcher = this.watcher;
+    if (!watcher) return;
+    if (!watcher.usable && watcher.confirmedCount === 0) {
+      console.log(`[job ${this.spec.jobId}] checkpoints not confirmable: ${watcher.offReason}`);
+      return;
+    }
+    const savedMin = Math.round(this.confirmedSavingMs / 60_000);
+    console.log(
+      `[job ${this.spec.jobId}] confirmed ${watcher.confirmedCount} checkpoints, ` +
+        `saving ${savedMin} min of waiting`,
+    );
   }
 
   private recordFailure(error: unknown): void {
@@ -267,15 +360,20 @@ export class JobRunner {
       if (this.controller.signal.aborted) throw this.controller.signal.reason;
 
       if (event.type === 'pause') {
-        // Land the burst before a long rest, so the document holds a complete
-        // thought for the whole gap. This is what gives version history a
-        // separate, human-looking revision per burst instead of one blob.
-        if (event.rest) {
+        if (event.checkpoint) {
+          // Land the writing before a gap whose whole purpose is to be
+          // snapshotted, so the document holds a complete thought for the
+          // duration of it. This is what gives version history a separate,
+          // human-looking revision per burst instead of one blob — and it is
+          // also what makes a revision appearing during the gap mean
+          // something, since everything we have typed is already in the file.
           await this.flushOnce();
-          this.resting = true;
+          this.resting = event.rest === true;
+          await this.checkpointPause(event);
+          this.resting = false;
+          continue;
         }
         await this.timedSleep(event.duration);
-        this.resting = false;
         continue;
       }
 

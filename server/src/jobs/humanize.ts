@@ -23,7 +23,33 @@
 export type TypeEvent = { type: 'type'; char: string; delay: number };
 export type BackspaceEvent = { type: 'backspace'; count: number; delay: number };
 /** `rest: true` marks a between-burst gap — the pauses that absorb extra time. */
-export type PauseEvent = { type: 'pause'; duration: number; rest?: true };
+export type PauseEvent = {
+  type: 'pause';
+  duration: number;
+  rest?: true;
+  /**
+   * Marks a pause whose entire job is to sit still long enough for Docs to
+   * close a revision, and says how far it may be cut short if the runner can
+   * *see* that it already has.
+   *
+   * `duration` is what this pause costs when nobody is watching: the blind,
+   * conservative wait derived from `DOCS_CHECKPOINT_MS`. Almost all of it is
+   * margin for an assumption — Docs' checkpoint clock is not observable from
+   * inside the plan, so the plan has to assume the worst phase of it.
+   *
+   * A runner that can poll the document's revision list does not have to
+   * assume. It waits `minMs` (the floor that keeps the gap looking like a
+   * human stopping to think), then watches for the revision to appear and
+   * carries on the moment it does. `duration` stays the ceiling, so a runner
+   * that cannot see revisions — or one whose document does not expose them —
+   * behaves exactly as before.
+   *
+   * The planner still costs the plan at `duration`, because estimates and the
+   * countdown are shown before any of this is known. Finishing early is a
+   * pleasant surprise; promising early and not delivering is not.
+   */
+  checkpoint?: { minMs: number };
+};
 /**
  * Going back to fix a typo that was left behind several words ago — the
  * equivalent of clicking into the middle of a line and correcting it.
@@ -63,22 +89,62 @@ export interface HumanizeOptions {
 }
 
 /**
- * Google Docs checkpoints a document into version history roughly every two
- * minutes while it is being edited. Anything shorter than that interval is
- * invisible: a burst and the rest after it land in the same bucket, and a
- * mistake made and fixed inside one bucket is never recorded at all.
- *
- * So the floor sits comfortably above Docs' cadence rather than under it.
- * Raise `MIN_CHUNK_REST_MS` further for an even more spread-out history.
- */
-export const DEFAULT_MIN_CHUNK_REST_MS = 150_000;
-
-/**
  * Docs' own checkpoint cadence, as this engine models it. Every timing
  * guarantee below is expressed as a margin over this number rather than as a
  * magic constant, so retuning the model means changing one line.
  */
 export const DOCS_CHECKPOINT_MS = 120_000;
+
+/**
+ * How far every checkpoint-buying gap clears `DOCS_CHECKPOINT_MS`.
+ *
+ * A gap strictly longer than the checkpoint interval contains a checkpoint
+ * whatever the phase of Docs' clock, so the margin is not buying correctness —
+ * correctness is had at 1.0. It is buying tolerance for the interval being
+ * "roughly" two minutes rather than exactly.
+ *
+ * It used to be 1.25 on the rest and 1.6 on the correction gap, drawn on top
+ * of a jitter multiplier of up to 1.45, which stacked to a mean rest of 182s
+ * against a 120s interval — better than half the wait was margin on margin.
+ * The cost of that is not abstract: every gap in the plan is one revision's
+ * worth of wall clock, so 50s of surplus margin per gap was the single largest
+ * line item in a job's runtime and it bought nothing a reader could see.
+ */
+export const CHECKPOINT_MARGIN = 1.1;
+
+/**
+ * Google Docs checkpoints a document into version history roughly every two
+ * minutes while it is being edited. Anything shorter than that interval is
+ * invisible: a burst and the rest after it land in the same bucket, and a
+ * mistake made and fixed inside one bucket is never recorded at all.
+ *
+ * So the floor sits above Docs' cadence rather than under it. Raise
+ * `MIN_CHUNK_REST_MS` further for an even more spread-out history.
+ */
+export const DEFAULT_MIN_CHUNK_REST_MS = Math.round(DOCS_CHECKPOINT_MS * CHECKPOINT_MARGIN);
+
+/**
+ * How much jitter a rest carries on top of its floor.
+ *
+ * Enough that the gaps are visibly not identical, and no more: every
+ * millisecond here is spent once per revision across the whole job.
+ */
+const REST_JITTER = { min: 1, max: 1.18 };
+
+/**
+ * The shortest a checkpoint gap may be cut to when the runner can confirm the
+ * revision actually landed.
+ *
+ * Confirmation replaces the assumption the margin exists to survive, so what
+ * is left to justify is only the realism of the gap itself: a writer who
+ * stops, thinks and starts again does not do it in four seconds. Twenty-five
+ * seconds is a believable "reread the last sentence" pause, and it is the
+ * floor the runner is never allowed to go below however fast Docs answers.
+ *
+ * Scaled with `minChunkRestMs` like every other think pause, so tests that
+ * shrink the rest do not sit through it.
+ */
+const CHECKPOINT_FLOOR_MS = 25_000;
 
 /**
  * How long a mistake must sit in the document before it is corrected.
@@ -90,11 +156,20 @@ export const DOCS_CHECKPOINT_MS = 120_000;
  * nearly six minutes to re-buy a guarantee the plan had mostly paid for
  * already.
  *
- * The margin over the checkpoint interval is generous because the phase of
- * Docs' clock is unknowable: a checkpoint could fire a moment before the
- * mistake is typed, so the gap has to cover most of a second interval too.
+ * The margin over the checkpoint interval covers the phase of Docs' clock,
+ * which is unknowable from inside a pure planner: a checkpoint could fire a
+ * moment before the mistake is typed, so the gap has to reach into a second
+ * interval. It is a fifth over the standard gap margin rather than the half
+ * again it used to be, because the old figure was compounding with a rest
+ * jitter that has since been trimmed — the two together were buying the same
+ * guarantee twice.
+ *
+ * A runner that confirms revisions supersedes this arithmetic entirely: the
+ * gap carrying the correction is cut short only once a new revision has been
+ * *observed* since the mistake was typed, which is the property this constant
+ * is trying to make likely.
  */
-const CORRECTION_GAP_MS = Math.round(DOCS_CHECKPOINT_MS * 1.6);
+const CORRECTION_GAP_MS = Math.round(DOCS_CHECKPOINT_MS * CHECKPOINT_MARGIN * 1.2);
 
 /**
  * How many rests a mistake waits through before being noticed. Waiting two
@@ -160,8 +235,16 @@ const LABOURED_BURST_CHANCE = 0.32;
  *
  * Placed at a word boundary partway through the burst, so the snapshot lands
  * mid-clause rather than at a tidy seam.
+ *
+ * The range sits a little under the standard gap margin at the bottom because
+ * a stall is not the whole gap — the typing either side of it is part of the
+ * same quiet stretch as far as Docs is concerned, and a burst's own span is
+ * what has to clear the interval, not the stall in isolation.
  */
-const STALL_MS = { min: 105_000, max: 210_000 };
+const STALL_MS = {
+  min: Math.round(DOCS_CHECKPOINT_MS * CHECKPOINT_MARGIN * 0.92),
+  max: Math.round(DOCS_CHECKPOINT_MS * CHECKPOINT_MARGIN * 1.25),
+};
 const STALL_CHANCE_PER_WORD = 0.4;
 
 /**
@@ -351,6 +434,22 @@ export function humanize(text: string, options: HumanizeOptions = {}): HumanEven
   const thinkScale = minRest / DEFAULT_MIN_CHUNK_REST_MS;
   const think = (range: { min: number; max: number }): number =>
     rng.range(range.min, range.max) * thinkScale;
+  /**
+   * How short a confirmed checkpoint gap may be cut. Scaled with the rest for
+   * the same reason think pauses are: a test that sets a one-second rest must
+   * not then sit through a twenty-five second floor.
+   */
+  const checkpointFloor = Math.max(1, Math.round(CHECKPOINT_FLOOR_MS * thinkScale));
+  /**
+   * The correction gap, scaled with the rest like every other pause here.
+   *
+   * It used to be applied as an absolute, which meant `minChunkRestMs` was not
+   * actually a working test seam: a suite that set a 400ms rest to keep itself
+   * quick still sat through a 158-second top-up on any rest that happened to
+   * be carrying a typo. In production `thinkScale` is 1 and this is exactly
+   * `CORRECTION_GAP_MS`, so nothing about a real job changes.
+   */
+  const correctionGapMs = CORRECTION_GAP_MS * thinkScale;
 
   const minChunkChars = Math.max(1, options.minChunkChars ?? DEFAULT_MIN_CHUNK_CHARS);
   const maxChunkChars = Math.max(minChunkChars, options.maxChunkChars ?? DEFAULT_MAX_CHUNK_CHARS);
@@ -419,6 +518,17 @@ export function humanize(text: string, options: HumanizeOptions = {}): HumanEven
   };
 
   /**
+   * A pause that exists to let Docs close a revision, rather than to look like
+   * thinking. Same shape as any other pause, but tagged so a runner that can
+   * watch the document's revision list knows it may stop waiting early.
+   */
+  const emitCheckpointPause = (ms: number): void => {
+    const duration = Math.max(1, Math.round(ms));
+    events.push({ type: 'pause', duration, checkpoint: { minMs: Math.min(checkpointFloor, duration) } });
+    elapsedMs += duration;
+  };
+
+  /**
    * Stop and think. Only emitted between bursts, and only these pauses grow
    * when the job is stretched over a longer target duration.
    *
@@ -428,7 +538,7 @@ export function humanize(text: string, options: HumanizeOptions = {}): HumanEven
   const emitRest = (force = false): void => {
     if (charsThisChunk === 0 && !pendingTypo) return;
 
-    let duration = Math.round(minRest * rng.range(1, 1.45));
+    let duration = Math.round(minRest * rng.range(REST_JITTER.min, REST_JITTER.max));
 
     // Is this the break where the mistake gets spotted?
     const fixingNow = pendingTypo !== null && (force || pendingTypo.restsToWait <= 1);
@@ -440,11 +550,11 @@ export function humanize(text: string, options: HumanizeOptions = {}): HumanEven
       // up by whatever gap is still owed, instead of inflating every rest that
       // happens to be carrying one.
       const alreadyWaited = elapsedMs - pendingTypo.madeAtMs;
-      const shortfall = CORRECTION_GAP_MS - (alreadyWaited + duration);
+      const shortfall = correctionGapMs - (alreadyWaited + duration);
       if (shortfall > 0) duration += Math.round(shortfall);
     }
 
-    events.push({ type: 'pause', duration, rest: true });
+    events.push({ type: 'pause', duration, rest: true, checkpoint: { minMs: checkpointFloor } });
     elapsedMs += duration;
     charsThisChunk = 0;
     // The next stretch of writing may go down easily or may have to be worked
@@ -514,7 +624,7 @@ export function humanize(text: string, options: HumanizeOptions = {}): HumanEven
     if (stallOwed && charsThisChunk >= 8) {
       const lastChance = charsThisChunk >= minChunkChars * 0.8;
       if (lastChance || rng.chance(STALL_CHANCE_PER_WORD)) {
-        emitPause(think(STALL_MS));
+        emitCheckpointPause(think(STALL_MS));
         stallOwed = false;
       }
     }
@@ -675,6 +785,11 @@ export function humanize(text: string, options: HumanizeOptions = {}): HumanEven
  * afternoon still types at ordinary speed, so slowing the keys themselves
  * would read as obviously synthetic. The extra time is spread unevenly across
  * the rests so the gaps do not all come out identical.
+ *
+ * A stretched plan also loses its `checkpoint` markers entirely: a job running
+ * at its natural minimum should finish as soon as the revisions it needs have
+ * actually landed, but a job the user asked to spread over three hours should
+ * take three hours.
  */
 function applyTargetDuration(events: HumanEvent[], targetMs: number | undefined, rng: Rng): void {
   if (!targetMs || !Number.isFinite(targetMs)) return;
@@ -689,6 +804,14 @@ function applyTargetDuration(events: HumanEvent[], targetMs: number | undefined,
   });
   // Nothing to stretch: the text is too short to have a natural seam.
   if (restIndexes.length === 0) return;
+
+  // Once a job is being stretched, its duration is a promise rather than a
+  // by-product, and that applies to every gap in it — not just the rests that
+  // get grown. A mid-burst stall cut short on a confirmed revision would still
+  // land the job ahead of the time the user asked for.
+  for (const event of events) {
+    if (event.type === 'pause') delete event.checkpoint;
+  }
 
   const weights = restIndexes.map(() => 0.5 + rng.float());
   const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
@@ -722,6 +845,26 @@ export function estimateDurationMs(events: HumanEvent[]): number {
 /** How many mistakes the plan leaves in the document and later goes back to fix. */
 export function countRepairs(events: HumanEvent[]): number {
   return events.filter((event) => event.type === 'repair').length;
+}
+
+/**
+ * How many separate revisions Docs should end up recording.
+ *
+ * Not the same as the burst count, and the difference matters when judging
+ * granularity: a laboured burst stalls for longer than the checkpoint interval
+ * partway through, so it is snapshotted twice — once mid-sentence and once at
+ * the seam. Counting bursts undercounts the history by whatever share of them
+ * are laboured, which flatters any change that trades bursts for stalls.
+ *
+ * Every gap that clears the checkpoint interval is one boundary; the writing
+ * before the first is the first revision.
+ */
+export function countRevisions(events: HumanEvent[]): number {
+  let boundaries = 0;
+  for (const event of events) {
+    if (event.type === 'pause' && event.duration > DOCS_CHECKPOINT_MS) boundaries += 1;
+  }
+  return boundaries + 1;
 }
 
 /** Number of writing bursts, i.e. how many separate revisions to expect. */
