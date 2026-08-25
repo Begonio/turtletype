@@ -69,7 +69,7 @@ describe('catalog', () => {
   });
 
   /**
-   * The credit unit is defined as five hours of typing; `charsPerCredit` is
+   * The credit unit is defined as three hours of typing; `charsPerCredit` is
    * derived from it and the planner's pace. Nothing at runtime re-derives it,
    * so a pacing change would silently move what a credit is worth — the same
    * failure `whatYouGet.ts` exists to prevent on the pricing page.
@@ -81,7 +81,7 @@ describe('catalog', () => {
    * ends, so even reusing the same prose with a couple of sentences trimmed
    * moves the answer by three quarters of an hour.
    */
-  it('keeps one credit worth about five hours of typing', () => {
+  it('keeps one credit worth about three hours of typing', () => {
     resetReferencePoints();
     const oneCredit = referencePoints().find(
       (row) => row.chars === config.billing.charsPerCredit,
@@ -94,9 +94,9 @@ describe('catalog', () => {
 
     const hours = oneCredit.durationMs / 3_600_000;
     assert.ok(
-      hours > 4.5 && hours < 5.5,
+      hours > 2.7 && hours < 3.3,
       `one credit (${config.billing.charsPerCredit.toLocaleString()} chars) now plans ` +
-        `${hours.toFixed(2)} hours, not about five. Either pacing changed and ` +
+        `${hours.toFixed(2)} hours, not about three. Either pacing changed and ` +
         'CHARS_PER_CREDIT needs re-deriving, or the pacing change was unintended.',
     );
   });

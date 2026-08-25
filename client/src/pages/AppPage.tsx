@@ -4,6 +4,7 @@ import Wordmark from '../components/Wordmark';
 import Composer from '../components/Composer';
 import Controls from '../components/Controls';
 import ProgressPanel from '../components/ProgressPanel';
+import SpeedUpdateNotice from '../components/SpeedUpdateNotice';
 import { api } from '../lib/api';
 import { formatCreditsWithUnit } from '../lib/credits';
 import { isTerminal, useJobStore } from '../store/useJobStore';
@@ -128,6 +129,7 @@ export default function AppPage() {
       </header>
 
       <main className="mx-auto max-w-6xl px-6 py-8">
+        <SpeedUpdateNotice />
         <div className="flex flex-col gap-6 lg:flex-row">
           <Composer />
           <Controls />

@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { isActive, useJobStore } from '../store/useJobStore';
 import { durationToSlider, formatDuration, formatFinishTime, sliderToDuration } from '../lib/format';
 import { formatCredits, formatCreditsWithUnit } from '../lib/credits';
+import { destinationPacing, pacingBadge, pacingExplanation } from '../lib/pacing';
 
 export default function Controls() {
   const durationMs = useJobStore((state) => state.durationMs);
@@ -23,6 +24,7 @@ export default function Controls() {
   const billingEnabled = useJobStore((state) => state.billingEnabled);
   const needsCredits = useJobStore((state) => state.needsCredits);
   const credits = useJobStore((state) => state.user?.credits ?? 0);
+  const confirmsCheckpoints = useJobStore((state) => state.confirmsCheckpoints);
 
   const setDurationMs = useJobStore((state) => state.setDurationMs);
   const setDocMode = useJobStore((state) => state.setDocMode);
@@ -45,6 +47,33 @@ export default function Controls() {
   const cannotAfford = billingEnabled && jobCost > 0 && jobCost > credits;
   const canStart =
     !locked && text.trim().length > 0 && !missingDoc && hasEstimate && !cannotAfford;
+
+  /**
+   * What the current destination means for how long this actually takes.
+   *
+   * Null while there is nothing honest to say — an existing-doc job with no
+   * document chosen yet, or a deploy that does not confirm checkpoints.
+   */
+  const pacing = destinationPacing({
+    docMode,
+    hasPickedDoc: Boolean(selectedDoc),
+    hasPastedLink: docUrlInput.trim().length > 0,
+    confirmsCheckpoints,
+  });
+
+  /**
+   * The badge on each destination option, which has to answer for the option
+   * as a whole rather than for the current state of it. "Use an existing doc"
+   * is fast or slow depending on how the doc gets chosen, so it only carries a
+   * badge once that choice has been made.
+   */
+  const optionPacing = (value: 'new' | 'existing'): ReturnType<typeof destinationPacing> =>
+    destinationPacing({
+      docMode: value,
+      hasPickedDoc: Boolean(selectedDoc),
+      hasPastedLink: docUrlInput.trim().length > 0,
+      confirmsCheckpoints,
+    });
 
   // No explicit choice means "as fast as is still believable".
   const effectiveMs = Math.max(minDurationMs, durationMs ?? 0);
@@ -96,6 +125,21 @@ export default function Controls() {
           </p>
         )}
 
+        {hasEstimate && pacing ? (
+          <p
+            className={`mt-3 rounded-lg border px-3 py-2 text-xs leading-relaxed ${
+              pacing === 'confirmed'
+                ? 'border-accent-600/40 bg-accent-600/10 text-ink-300'
+                : 'border-amber-500/40 bg-amber-500/10 text-amber-200'
+            }`}
+          >
+            <span className="font-medium">
+              {pacing === 'confirmed' ? 'This doc: usually faster' : 'This doc: full time'}
+            </span>{' '}
+            {pacingExplanation(pacing)}
+          </p>
+        ) : null}
+
         {durationMs !== null && durationMs > minDurationMs ? (
           <button
             type="button"
@@ -127,26 +171,38 @@ export default function Controls() {
               { value: 'new', label: 'Create a new doc' },
               { value: 'existing', label: 'Use an existing doc' },
             ] as const
-          ).map((option) => (
-            <label
-              key={option.value}
-              className={`flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-2.5 text-sm transition ${
-                docMode === option.value
-                  ? 'border-accent-600/60 bg-accent-600/10 text-ink-200'
-                  : 'border-ink-700 text-ink-300 hover:border-ink-600'
-              }`}
-            >
-              <input
-                type="radio"
-                name="docMode"
-                value={option.value}
-                checked={docMode === option.value}
-                onChange={() => setDocMode(option.value)}
-                className="h-3.5 w-3.5 accent-accent-500"
-              />
-              {option.label}
-            </label>
-          ))}
+          ).map((option) => {
+            const mode = optionPacing(option.value);
+            return (
+              <label
+                key={option.value}
+                className={`flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-2.5 text-sm transition ${
+                  docMode === option.value
+                    ? 'border-accent-600/60 bg-accent-600/10 text-ink-200'
+                    : 'border-ink-700 text-ink-300 hover:border-ink-600'
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="docMode"
+                  value={option.value}
+                  checked={docMode === option.value}
+                  onChange={() => setDocMode(option.value)}
+                  className="h-3.5 w-3.5 accent-accent-500"
+                />
+                <span>{option.label}</span>
+                {mode ? (
+                  <span
+                    className={`ml-auto shrink-0 font-mono text-[10px] ${
+                      mode === 'confirmed' ? 'text-accent-400' : 'text-amber-300'
+                    }`}
+                  >
+                    {pacingBadge(mode)}
+                  </span>
+                ) : null}
+              </label>
+            );
+          })}
         </div>
 
         {docMode === 'existing' ? (
@@ -195,6 +251,15 @@ export default function Controls() {
               )
             ) : null}
 
+            {/* Said before the choice, not after it. By the time a link is in
+                the field the person has already done the slower thing. */}
+            {confirmsCheckpoints && pickerAvailable && !selectedDoc ? (
+              <p className="mt-2 text-xs leading-relaxed text-accent-400">
+                Choosing the doc here lets us watch its version history, and a job that can do
+                that finishes in roughly a third of the time. A pasted link cannot.
+              </p>
+            ) : null}
+
             {/* The link field never goes away entirely. The picker depends on
                 a Google popup, third-party scripts and a permission the user
                 can decline, and none of those are things this panel should be
@@ -219,6 +284,14 @@ export default function Controls() {
                 or paste a link instead
               </button>
             )}
+
+            {confirmsCheckpoints && (!pickerAvailable || showPasteField || pickerError) ? (
+              <p className="mt-2 text-xs leading-relaxed text-amber-300">
+                {pickerAvailable
+                  ? 'A doc reached by link runs the full time shown above: Google only grants us access to the one file you pick, so we cannot see this document’s version history and every gap has to wait out the clock.'
+                  : 'A doc reached by link runs the full time shown above — Google does not let us read its version history, so every gap has to wait out the clock rather than stopping when the revision lands.'}
+              </p>
+            ) : null}
 
             {pickerError ? (
               <p className="mt-2 text-xs leading-relaxed text-amber-300">{pickerError}</p>

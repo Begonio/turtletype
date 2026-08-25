@@ -34,7 +34,7 @@ function main(): void {
   console.log(`  client URL       ${config.clientUrl}`);
   console.log(`  billing          ${config.billing.enabled ? 'ENABLED' : 'DISABLED'}`);
   console.log(`  free mode        ${config.billing.freeModeAllowed ? 'ON (jobs are free)' : 'off'}`);
-  // Measured, not asserted. The credit unit is defined as five hours of
+  // Measured, not asserted. The credit unit is defined as three hours of
   // typing, so the check that matters before a launch is whether it still is —
   // and the only honest way to print that is to run the planner.
   const oneCredit = referencePoints().find((row) => row.chars === config.billing.charsPerCredit);

@@ -46,6 +46,11 @@ interface JobStore {
   remainingMs: number | null;
   remainingAt: number | null;
   resting: boolean;
+  /**
+   * Gaps this job ended early because it could see the revision land. Lets the
+   * progress panel report the speed-up as an observation rather than a claim.
+   */
+  checkpointsConfirmed: number;
   /** Characters that have scrolled off the front of the preview. */
   previewDropped: number;
   docMode: DocMode;
@@ -55,6 +60,13 @@ interface JobStore {
   /** Picker settings from the server. null until /api/public-config answers. */
   pickerConfig: PickerConfig | null;
   pickerAvailable: boolean;
+  /**
+   * Whether this deploy ends a gap as soon as it sees the revision land. Drives
+   * the composer's honesty about which destination is faster, so it is read
+   * from the server rather than assumed — a deploy with the behaviour switched
+   * off must not have a UI promising it.
+   */
+  confirmsCheckpoints: boolean;
   pickerBusy: boolean;
   pickerError: string | null;
 
@@ -160,12 +172,14 @@ export const useJobStore = create<JobStore>()(
       remainingMs: null,
       remainingAt: null,
       resting: false,
+      checkpointsConfirmed: 0,
       previewDropped: 0,
       docMode: 'new',
       docUrlInput: '',
       selectedDoc: null,
       pickerConfig: null,
       pickerAvailable: false,
+      confirmsCheckpoints: false,
       pickerBusy: false,
       pickerError: null,
 
@@ -197,7 +211,11 @@ export const useJobStore = create<JobStore>()(
           // that caused it is still recent.
           void api
             .publicConfig()
-            .then(({ picker }) => {
+            .then(({ picker, confirmsCheckpoints }) => {
+              // Set before the picker check below returns early: the two are
+              // independent, and a deploy can confirm checkpoints without
+              // having a Picker API key configured.
+              set({ confirmsCheckpoints: Boolean(confirmsCheckpoints) });
               if (!picker?.enabled) return;
               set({
                 pickerAvailable: true,
@@ -357,6 +375,7 @@ export const useJobStore = create<JobStore>()(
           remainingMs: null,
           remainingAt: null,
           resting: false,
+      checkpointsConfirmed: 0,
         });
 
         try {
@@ -475,6 +494,7 @@ export const useJobStore = create<JobStore>()(
             charsPerMinute: number;
             remainingMs?: number;
             resting: boolean;
+            checkpointsConfirmed?: number;
             ops: WireOp[];
           };
           set((state) => ({
@@ -486,6 +506,7 @@ export const useJobStore = create<JobStore>()(
             totalChars: data.totalChars,
             charsPerMinute: data.charsPerMinute,
             resting: data.resting,
+            checkpointsConfirmed: data.checkpointsConfirmed ?? 0,
             // Stamped on arrival so the client can tick it down locally without
             // trusting the two clocks to agree.
             remainingMs: data.remainingMs ?? null,
@@ -575,6 +596,7 @@ export const useJobStore = create<JobStore>()(
           remainingMs: null,
           remainingAt: null,
           resting: false,
+      checkpointsConfirmed: 0,
           preview: '',
           previewDropped: 0,
           error: null,

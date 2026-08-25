@@ -44,5 +44,17 @@ publicConfigRouter.get('/public-config', (_req, res) => {
      * is a platform setting rather than a client rebuild.
      */
     picker: config.google.picker,
+    /**
+     * Whether this deploy ends a checkpoint gap as soon as it can see the
+     * revision land, rather than waiting the planner's worst case out.
+     *
+     * Served so the composer can tell someone which destination is faster
+     * *and why* before they commit to one — the difference is large, it is
+     * not guessable, and it turns on a permission the user controls. Sending
+     * the flag rather than assuming it means an operator who has set
+     * CONFIRM_CHECKPOINTS=false does not have a UI promising a speed-up that
+     * deploy will not deliver.
+     */
+    confirmsCheckpoints: config.jobs.confirmCheckpoints,
   });
 });

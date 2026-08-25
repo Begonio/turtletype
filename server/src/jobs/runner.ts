@@ -523,6 +523,7 @@ export class JobRunner {
       totalChars,
       charsPerMinute,
       resting: this.resting,
+      checkpointsConfirmed: this.watcher?.confirmedCount ?? 0,
       ...(remainingMs === null ? {} : { remainingMs }),
       ops: [...(ops as WireOp[]), ...(extra ? [extra] : [])],
     });

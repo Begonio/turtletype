@@ -298,18 +298,17 @@ export const config = {
      * length of time proportional to its character count, so charging per
      * character is charging per job-hour.
      *
-     * **One credit is meant to be five hours of typing.** That is the number
+     * **One credit is meant to be three hours of typing.** That is the number
      * to reason about; this one is derived from it. The planner writes about
      * 1,830 characters an hour at current pacing — measured across seeds and
-     * document sizes, near enough linear from 1,000 characters up — so five
-     * hours is 9,150 characters.
+     * document sizes, near enough linear from 1,000 characters up — so three
+     * hours is 5,490 characters.
      *
-     * It was 7,700 against a pace of 1,540/hour, before the checkpoint margins
-     * were trimmed. Re-deriving it rather than leaving it means a credit still
-     * buys five hours; leaving it would have quietly turned the same money
-     * into four and a quarter. Which of those is right is a pricing decision,
-     * but it is not one to make by omission — the rule this codebase follows
-     * is that the five-hour definition is primary and this number follows it.
+     * The definition was five hours until the pacing work landed. Shortening
+     * it to three is a deliberate repricing, not a re-derivation: the same
+     * money now buys less writing. Whichever number is chosen, the rule this
+     * codebase follows is that the hours are primary and this figure follows
+     * them — never the other way round, and never adjusted by feel.
      *
      * Measured against the planner's own estimate, which is the figure quoted
      * on the pricing page and the only one knowable when a customer pays. A
@@ -320,11 +319,11 @@ export const config = {
      *
      * Do not adjust this by feel when pacing changes. `credits.test.ts` runs
      * the real planner over a document of exactly this length and fails if it
-     * no longer takes about five hours, which is the same discipline
+     * no longer takes about three hours, which is the same discipline
      * `whatYouGet.ts` applies to the pricing page: the figure a customer is
      * charged against has to be one the engine actually produces.
      */
-    charsPerCredit: num('CHARS_PER_CREDIT', 9_150),
+    charsPerCredit: num('CHARS_PER_CREDIT', 5_490),
     /** Credits handed to a new account once, so the revision history can be seen before paying. */
     signupGrantCredits: num('SIGNUP_GRANT_CREDITS', 1),
     /**
@@ -333,10 +332,10 @@ export const config = {
      *
      * Kept at `maxTextLength / charsPerCredit`, so the credit ceiling and the
      * character ceiling bite at the same point and a document is refused for
-     * one clearly stated reason rather than two. 22 credits is 201,300
+     * one clearly stated reason rather than two. 37 credits is 203,130
      * characters against a 200,000 character text limit.
      */
-    maxCreditsPerJob: num('MAX_CREDITS_PER_JOB', 22),
+    maxCreditsPerJob: num('MAX_CREDITS_PER_JOB', 37),
   },
 
   /**

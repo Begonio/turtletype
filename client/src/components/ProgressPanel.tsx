@@ -33,6 +33,7 @@ export default function ProgressPanel() {
   const remainingMs = useJobStore((state) => state.remainingMs);
   const remainingAt = useJobStore((state) => state.remainingAt);
   const resting = useJobStore((state) => state.resting);
+  const checkpointsConfirmed = useJobStore((state) => state.checkpointsConfirmed);
 
   const previewRef = useRef<HTMLPreElement>(null);
 
@@ -98,6 +99,17 @@ export default function ProgressPanel() {
             )}
           </span>
         </div>
+      ) : null}
+
+      {/* Reported, not predicted. Each of these is a gap that ended early
+          because Google had already recorded the revision, which is also why
+          the time remaining above keeps dropping faster than the clock. */}
+      {checkpointsConfirmed > 0 ? (
+        <p className="px-4 pt-3 text-xs leading-relaxed text-accent-400">
+          Running ahead of schedule: {checkpointsConfirmed}{' '}
+          {checkpointsConfirmed === 1 ? 'revision' : 'revisions'} confirmed saved in the doc, so
+          that many waits were cut short instead of run out.
+        </p>
       ) : null}
 
       <div className="px-4 pt-4">
