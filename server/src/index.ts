@@ -19,6 +19,7 @@ import { closePool, pool, waitForDatabase } from './db/pool.js';
 import { disposeAllChannels } from './jobs/events.js';
 import { jobQueue } from './jobs/queue.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
+import { helmetOptions } from './security/headers.js';
 import { billingRouter, stripeWebhookRouter } from './routes/billing.js';
 import { jobsRouter } from './routes/jobs.js';
 import { publicConfigRouter } from './routes/publicConfig.js';
@@ -43,14 +44,7 @@ export function createApp(): express.Express {
     app.set('trust proxy', config.trustProxy);
   }
 
-  app.use(
-    helmet({
-      // The SPA is served from the same process in production; the default
-      // CSP would block its own bundle.
-      contentSecurityPolicy: false,
-      crossOriginEmbedderPolicy: false,
-    }),
-  );
+  app.use(helmet(helmetOptions));
 
   app.use(
     cors({
