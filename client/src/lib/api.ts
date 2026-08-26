@@ -33,6 +33,22 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return payload as T;
 }
 
+/**
+ * Which finished-job announcements this account wants.
+ *
+ * Two channels, because they cover different absences: email is the only one
+ * that reaches someone who closed the tab — which is the normal way to use
+ * this service — and a browser notification is the only one that arrives the
+ * moment it happens. Two events, because wanting to hear about failures and
+ * not about successes is a real preference.
+ */
+export interface NotificationPrefs {
+  emailOnDone: boolean;
+  emailOnFailure: boolean;
+  browserOnDone: boolean;
+  browserOnFailure: boolean;
+}
+
 export interface CurrentUser {
   id: string;
   email: string;
@@ -42,6 +58,7 @@ export interface CurrentUser {
   /** Credits available to spend. Always 0 on a deploy with billing switched off. */
   credits: number;
   plan: string | null;
+  notifications: NotificationPrefs;
   createdAt: string;
 }
 
@@ -175,6 +192,13 @@ export interface PublicConfig {
    * must not advertise it.
    */
   confirmsCheckpoints: boolean;
+  /**
+   * What this deploy can actually deliver. `email` is false with no mail
+   * provider configured, in which case the settings panel says so rather than
+   * offering a switch that does nothing — browser notifications need nothing
+   * from the server and are unaffected.
+   */
+  notifications: { email: boolean };
 }
 
 export interface JobSnapshot {
@@ -215,6 +239,16 @@ export const api = {
   resumeJob: (jobId: string) => request<{ ok: true }>(`/api/jobs/${jobId}/resume`, { method: 'POST' }),
 
   cancelJob: (jobId: string) => request<{ ok: true }>(`/api/jobs/${jobId}`, { method: 'DELETE' }),
+
+  /**
+   * Changes notification settings. Partial on purpose: the panel sends the one
+   * switch that moved, so two open tabs cannot revert each other's changes.
+   */
+  updateNotifications: (patch: Partial<NotificationPrefs>) =>
+    request<{ user: CurrentUser }>('/api/me/notifications', {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    }),
 
   logout: () => request<{ ok: true }>('/auth/logout', { method: 'POST' }),
 

@@ -1,3 +1,4 @@
+import type { NotificationPrefs } from '../notify/policy.js';
 import { query } from './pool.js';
 import type { UserRow } from './types.js';
 
@@ -74,4 +75,37 @@ export async function clearUserTokens(userId: string): Promise<void> {
       WHERE id = $1`,
     [userId],
   );
+}
+
+/**
+ * Changes some or all of a user's notification settings.
+ *
+ * A partial patch rather than a whole object: the app has four independent
+ * switches and flipping one must not depend on the browser having an accurate
+ * copy of the other three. COALESCE leaves an omitted setting exactly as it
+ * was, so two tabs disagreeing about the state of one switch cannot silently
+ * revert another.
+ */
+export async function updateNotificationPrefs(
+  userId: string,
+  patch: Partial<NotificationPrefs>,
+): Promise<UserRow | null> {
+  const { rows } = await query<UserRow>(
+    `UPDATE users
+        SET notify_email_done     = COALESCE($2, notify_email_done),
+            notify_email_failed   = COALESCE($3, notify_email_failed),
+            notify_browser_done   = COALESCE($4, notify_browser_done),
+            notify_browser_failed = COALESCE($5, notify_browser_failed),
+            updated_at            = NOW()
+      WHERE id = $1
+      RETURNING *`,
+    [
+      userId,
+      patch.emailOnDone ?? null,
+      patch.emailOnFailure ?? null,
+      patch.browserOnDone ?? null,
+      patch.browserOnFailure ?? null,
+    ],
+  );
+  return rows[0] ?? null;
 }

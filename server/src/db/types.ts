@@ -1,4 +1,5 @@
 import { parseCredits } from '../billing/amount.js';
+import type { NotificationPrefs } from '../notify/policy.js';
 
 export interface UserRow {
   id: string;
@@ -22,6 +23,11 @@ export interface UserRow {
   credits: number;
   plan: string | null;
   current_period_end: Date | null;
+  /** Which finished-job announcements this account wants, by channel and outcome. */
+  notify_email_done: boolean;
+  notify_email_failed: boolean;
+  notify_browser_done: boolean;
+  notify_browser_failed: boolean;
   created_at: Date;
   updated_at: Date;
 }
@@ -54,6 +60,13 @@ export interface PublicUser {
   /** Credits available to spend, so the composer can price a job before submitting it. */
   credits: number;
   plan: string | null;
+  /**
+   * Notification settings, so the app can render the switches and — for the
+   * browser pair — know whether to raise a notification when the stream says
+   * the job ended. The browser half is only ever acted on here; the server
+   * stores it and never reads it back.
+   */
+  notifications: NotificationPrefs;
   createdAt: string;
 }
 
@@ -81,7 +94,18 @@ export function toPublicUser(row: UserRow): PublicUser {
     // render a balance carrying a stray fifteenth decimal place.
     credits: parseCredits(row.credits),
     plan: row.plan,
+    notifications: toNotificationPrefs(row),
     createdAt: row.created_at.toISOString(),
+  };
+}
+
+/** The four notification columns, as the shape the rest of the code reasons about. */
+export function toNotificationPrefs(row: UserRow): NotificationPrefs {
+  return {
+    emailOnDone: row.notify_email_done,
+    emailOnFailure: row.notify_email_failed,
+    browserOnDone: row.notify_browser_done,
+    browserOnFailure: row.notify_browser_failed,
   };
 }
 

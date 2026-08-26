@@ -369,6 +369,51 @@ export const config = {
     },
   },
 
+  /**
+   * Email notifications for a finished job.
+   *
+   * A job runs server-side for hours and the tab is expected to be closed —
+   * that is a headline feature — so the app has no way to tell anyone anything
+   * unless it can send mail. This is that.
+   *
+   * Off unless both a key and a From address are set, on the same fail-open
+   * principle as billing: a laptop and a self-hosted instance run with no mail
+   * provider at all and every job simply finishes quietly. Unlike billing this
+   * default is *not* inverted in production — a deploy that cannot email is
+   * degraded, not dishonest, so `launchChecks.ts` warns rather than refusing to
+   * boot. Browser notifications are unaffected either way: they are the
+   * client's own doing and need nothing configured here.
+   *
+   * Sent over the provider's HTTPS API rather than SMTP, for the same reason
+   * the Docs and Drive clients are bare `fetch` calls: no dependency to pin, no
+   * lockfile to regenerate, and no outbound SMTP port to discover is blocked on
+   * the platform. `MAIL_API_URL` defaults to Resend and is overridable, which
+   * is both how a compatible provider gets swapped in and how the tests point
+   * the sender at a local fake — the same trick as `GOOGLE_DOCS_ROOT_URL`.
+   */
+  notifications: {
+    get apiKey(): string {
+      return required('MAIL_API_KEY');
+    },
+    /** Sender, e.g. `TurtleType <notifications@example.org>`. No honest default exists. */
+    get from(): string {
+      return required('MAIL_FROM');
+    },
+    get apiUrl(): string {
+      return process.env.MAIL_API_URL?.trim() || 'https://api.resend.com/emails';
+    },
+    /** Empty means "use the public support address", which the mailer supplies. */
+    get replyTo(): string {
+      return process.env.MAIL_REPLY_TO?.trim() || '';
+    },
+    /** Email is off unless there is both somewhere to send from and a key to send with. */
+    get emailEnabled(): boolean {
+      return Boolean(process.env.MAIL_API_KEY?.trim() && process.env.MAIL_FROM?.trim());
+    },
+    /** How long a single send may take before it is abandoned. */
+    timeoutMs: num('MAIL_TIMEOUT_MS', 10_000),
+  },
+
   backoff: {
     initialDelayMs: num('BACKOFF_INITIAL_MS', 2_000),
     maxDelayMs: num('BACKOFF_MAX_MS', 32_000),

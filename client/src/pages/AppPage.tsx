@@ -4,6 +4,7 @@ import Wordmark from '../components/Wordmark';
 import Composer from '../components/Composer';
 import Controls from '../components/Controls';
 import ProgressPanel from '../components/ProgressPanel';
+import NotificationSettings from '../components/NotificationSettings';
 import SpeedUpdateNotice from '../components/SpeedUpdateNotice';
 import { api } from '../lib/api';
 import { formatCreditsWithUnit } from '../lib/credits';
@@ -140,6 +141,14 @@ export default function AppPage() {
             <ProgressPanel />
           </div>
         ) : null}
+
+        {/* Below the composer rather than behind a settings page: a job runs
+            for hours and the tab is meant to be closed, so how you get told it
+            ended is part of starting one, not an afterthought. Collapsed by
+            default so it costs a line. */}
+        <div className="mt-6">
+          <NotificationSettings />
+        </div>
       </main>
     </div>
   );

@@ -1,5 +1,6 @@
 import { formatCreditsWithUnit } from '../billing/amount.js';
 import { settleJobCredits } from '../billing/credits.js';
+import { notifyJobFinished } from '../notify/jobNotifications.js';
 import { query } from './pool.js';
 import type { JobRow, JobStatus } from './types.js';
 
@@ -94,6 +95,19 @@ export async function finishJob(
     // that into an unhandled rejection. Loud, because it is money.
     console.error(`[billing] could not settle credits for job ${jobId}:`, error);
   }
+
+  // Tell the user it ended. Here for the same reason the refund is here: this
+  // is the one function every terminal transition goes through, so anywhere
+  // else would eventually miss one. After the settle, so a failure email can
+  // truthfully say the credits are already back.
+  //
+  // Not awaited. The runner emits the SSE `done` event the moment this
+  // resolves, and a mail provider having a slow minute is not a reason to hold
+  // a browser's progress panel open. `notifyJobFinished` swallows its own
+  // errors; the catch here is the belt to that pair of braces.
+  void notifyJobFinished(jobId).catch((error) => {
+    console.error(`[notify] job ${jobId} notification failed:`, error);
+  });
 }
 
 /**
@@ -119,6 +133,14 @@ export async function failOrphanedJobs(): Promise<number> {
     } catch (error) {
       console.error(`[billing] could not refund orphaned job ${row.id}:`, error);
     }
+    // Worth an email precisely because nobody was watching: this is a job that
+    // died between the tab being closed and now, and the only other evidence
+    // of it is a row in a table the user cannot see. The rows here bypass
+    // `finishJob` (one UPDATE for the whole sweep rather than one per job), so
+    // the send has to be asked for explicitly.
+    void notifyJobFinished(row.id).catch((error) => {
+      console.error(`[notify] orphaned job ${row.id} notification failed:`, error);
+    });
   }
   return rows.length;
 }

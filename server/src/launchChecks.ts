@@ -81,6 +81,25 @@ export function launchReport(
   // development run with no Stripe account at all, by design.
   if (!isProduction) return { errors, warnings };
 
+  // Checked before the free-mode escape below, because it is not a billing
+  // rule: a deploy that charges nobody still has jobs that finish, and still
+  // has nothing to tell anyone with.
+  //
+  // A warning rather than an error, and the distinction is the point. A deploy
+  // that cannot bill is giving the product away; a deploy that cannot email is
+  // merely quieter than it should be — jobs still run, the progress stream
+  // still works, and a browser with the tab open is still notified. Taking the
+  // service down over it would be the worse outcome.
+  if (!value(env, 'MAIL_API_KEY') || !value(env, 'MAIL_FROM')) {
+    warnings.push({
+      subject: 'MAIL_API_KEY / MAIL_FROM',
+      detail:
+        'No mail provider is configured, so nobody is told when a job finishes or fails. Jobs ' +
+        'run for hours with the tab closed — that is the point of the service — so email is the ' +
+        'only channel that reaches someone who walked away. Set both to switch it on.',
+    });
+  }
+
   if (freeMode) {
     warnings.push({
       subject: 'ALLOW_FREE_MODE',

@@ -2,8 +2,21 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { launchReport, legalReport } from './launchChecks.js';
 
+/**
+ * A mail provider, spread into environments whose subject is billing.
+ *
+ * Kept separate so the billing tests below stay about billing: without it
+ * every one of them would also be asserting the mail warning, and the next
+ * person changing a price rule would have to work out why.
+ */
+const MAIL: NodeJS.ProcessEnv = {
+  MAIL_API_KEY: 're_test_abc',
+  MAIL_FROM: 'TurtleType <notifications@example.org>',
+};
+
 /** A production environment with everything a paying deploy needs. */
 const PAYING: NodeJS.ProcessEnv = {
+  ...MAIL,
   STRIPE_SECRET_KEY: 'sk_live_abc',
   STRIPE_WEBHOOK_SECRET: 'whsec_abc',
   STRIPE_PRICE_PACK_STARTER: 'price_1',
@@ -56,6 +69,7 @@ describe('launchReport', () => {
 
   it('accepts one pack alone, but says which are missing', () => {
     const { errors, warnings } = prod({
+      ...MAIL,
       STRIPE_SECRET_KEY: 'sk_live_abc',
       STRIPE_WEBHOOK_SECRET: 'whsec_abc',
       STRIPE_PRICE_PACK_STARTER: 'price_1',
@@ -79,9 +93,34 @@ describe('launchReport', () => {
   });
 
   it('lets free mode through, loudly', () => {
-    const { errors, warnings } = prod({ ALLOW_FREE_MODE: 'true' });
+    const { errors, warnings } = prod({ ...MAIL, ALLOW_FREE_MODE: 'true' });
     assert.deepEqual(errors, []);
     assert.deepEqual(subjects(warnings), ['ALLOW_FREE_MODE']);
+  });
+
+  it('warns when a production deploy has no way to email anyone', () => {
+    // Not an error: the jobs still run and the live stream still reports on
+    // them. But a job takes hours with the tab closed, so a deploy with no
+    // mail provider finishes them in silence.
+    const { errors, warnings } = prod({ ...PAYING, MAIL_API_KEY: undefined });
+    assert.deepEqual(errors, []);
+    assert.deepEqual(subjects(warnings), ['MAIL_API_KEY / MAIL_FROM']);
+  });
+
+  it('still warns about mail when billing is switched off on purpose', () => {
+    // Free mode short-circuits every billing rule after it, and notifications
+    // are not a billing rule — a deploy giving jobs away still has jobs that
+    // end.
+    const { warnings } = prod({ ALLOW_FREE_MODE: 'true' });
+    assert.deepEqual(subjects(warnings), ['MAIL_API_KEY / MAIL_FROM', 'ALLOW_FREE_MODE']);
+  });
+
+  it('needs both halves of the mail configuration', () => {
+    // A key with no From address cannot send, and neither can the reverse.
+    for (const half of [{ ...MAIL, MAIL_FROM: '  ' }, { ...MAIL, MAIL_API_KEY: '' }]) {
+      const { warnings } = prod({ ...PAYING, ...half });
+      assert.deepEqual(subjects(warnings), ['MAIL_API_KEY / MAIL_FROM']);
+    }
   });
 
   it('needs free mode spelled out, not merely present', () => {
