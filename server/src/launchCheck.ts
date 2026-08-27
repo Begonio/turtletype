@@ -49,6 +49,18 @@ function main(): void {
   console.log(`  operator         ${config.legal.operator}`);
   console.log(`  support email    ${config.legal.contactEmail}`);
   console.log(`  jurisdiction     ${config.legal.jurisdiction || '(unset)'}`);
+  // Printed rather than merely warned about, because "nobody was told" is the
+  // one failure of this app that produces no error anywhere: jobs still run,
+  // the stream still works, and the person who closed the tab simply never
+  // hears. `npm run mail:verify -w server` checks it properly, including a
+  // real send.
+  console.log(
+    `  email notices    ${
+      config.notifications.emailEnabled
+        ? `ENABLED (from ${config.notifications.from})`
+        : 'DISABLED (jobs finish quietly)'
+    }`,
+  );
   console.log('');
 
   const failures = [...errors, ...legal];

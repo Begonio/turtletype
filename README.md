@@ -313,6 +313,7 @@ Without `DATABASE_URL` those tests skip automatically.
 | `MAIL_FROM`            | no       | Sender address, on a domain verified with the provider. Required alongside the key. |
 | `MAIL_API_URL`         | no       | Send endpoint. Default `https://api.resend.com/emails`.        |
 | `MAIL_REPLY_TO`        | no       | Reply-to. Defaults to `SUPPORT_EMAIL`.                         |
+| `MAIL_TIMEOUT_MS`      | no       | Ceiling on one send. Default `10000`. Setup walkthrough: [`docs/email-setup.md`](docs/email-setup.md). |
 
 ---
 
@@ -418,6 +419,17 @@ click.
 Neither message ever contains any of the document's text — only counts, an outcome and a link to
 the user's own document. `jobs` holds no text to leak, and the OAuth submission says so.
 
+Setting the provider up — domain verification, the DNS records, the variables — is
+[`docs/email-setup.md`](docs/email-setup.md). Nothing about a misconfigured mail provider is
+visible at runtime, because the sender never throws: a wrong key, an unverified sending domain and
+a typo in `MAIL_FROM` all look like a job that finished and nobody hearing. So there is a command
+that asks on purpose, including a real send:
+
+```bash
+npm run mail:verify -w server                              # read the settings
+npm run mail:verify -w server -- --send you@example.org    # prove the domain is verified
+```
+
 ## Billing
 
 Jobs are paid for in credits: **one credit is three hours of typing**, which at the planner's
@@ -454,6 +466,7 @@ because "free for everyone" there is not a degraded mode, it is the product bein
 silently. `ALLOW_FREE_MODE=true` opts back out on purpose.
 
 - Dashboard setup and the go-live path: [`docs/stripe-setup.md`](docs/stripe-setup.md)
+- Email notification setup: [`docs/email-setup.md`](docs/email-setup.md)
 - Full launch checklist, including Google OAuth: [`docs/go-live.md`](docs/go-live.md)
 - `npm run launch:check -w server` — verifies the deploy can actually take payment
 - `npm run stripe:verify -w server` — checks Stripe's real prices against the catalog's cached

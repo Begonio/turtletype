@@ -55,6 +55,8 @@ Monorepo, npm workspaces, `server/` + `client/`, TypeScript throughout, ESM.
 - Off unless `MAIL_API_KEY` and `MAIL_FROM` are both set. `policy.ts` and `render.ts` are pure; `mailer.ts` is the only part that touches the network and it never throws
 - Browser notifications come off the existing SSE `done` / `error` events — no service worker, no web push, so they need the tab open somewhere
 - Four preferences on `users` (channel x outcome), patched through `PATCH /api/me/notifications`
+- `npm run mail:verify -w server` reads the settings; `-- --send you@example.org` sends the real rendered email through the real mailer. It exists because nothing here fails loudly — `mailer.ts` never throws, so a bad key, an unverified sending domain and a typo in `MAIL_FROM` are all indistinguishable from a job that finished quietly. Same discipline as `stripe:verify`: the checking half is pure and takes an env object, so `verify.test.ts` needs no provider
+- Setup — provider, DNS (SPF/DKIM/DMARC), variables, troubleshooting: `docs/email-setup.md`
 
 **Deploy**
 - Multi-stage Dockerfile (tini, non-root user, healthcheck)

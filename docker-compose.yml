@@ -46,6 +46,18 @@ services:
       CLIENT_URL: https://${APP_DOMAIN}
       # Caddy is one hop; Cloudflare in front of it makes two.
       TRUST_PROXY: ${TRUST_PROXY:-2}
+      # Optional: email when a job finishes. Both unset and jobs simply end
+      # quietly — browser notifications still work, but they need the tab open,
+      # and a job running for hours with the tab closed is the whole point of
+      # the service. The sender's domain has to be verified with the provider
+      # first; `npm run mail:verify -w server -- --send you@example.org` is the
+      # check, and docs/email-setup.md is the walkthrough.
+      MAIL_API_KEY: ${MAIL_API_KEY:-}
+      MAIL_FROM: ${MAIL_FROM:-}
+      MAIL_REPLY_TO: ${MAIL_REPLY_TO:-}
+      MAIL_API_URL: ${MAIL_API_URL:-}
+      # Named on /privacy, /terms and the reply-to of every notification.
+      SUPPORT_EMAIL: ${SUPPORT_EMAIL:-}
     expose:
       - '8080'
 

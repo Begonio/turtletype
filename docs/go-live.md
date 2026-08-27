@@ -6,7 +6,9 @@ OAuth app has to leave Testing so more than 100 people can sign in.
 
 The first is done — the landing page reads its line off the live catalog now,
 so it cannot drift again. The other two are below, in the order they should
-happen. **Do the Stripe half first.** OAuth verification is weeks of waiting on
+happen. A fourth thing is not a gate but belongs in the same pass:
+a mail provider, without which a job that finishes hours after the user closed
+the tab tells nobody. **Do the Stripe half first.** OAuth verification is weeks of waiting on
 someone else; billing is an afternoon of your own work, and there is no reason
 for the two clocks to run in series.
 
@@ -102,7 +104,35 @@ trial cost more than it converts.
 
 ---
 
-## 3. Get out of Testing on Google
+## 3. Make sure a finished job tells someone
+
+Not a gate the way the other two are — the app works without it — but this is
+the pass to do it in, because the failure it prevents is the one users notice
+most and you notice least. A job runs for hours with the tab closed; that is
+the headline feature. Without a mail provider configured, it ends and nobody is
+told, and there is no error anywhere to say so.
+
+Follow [`email-setup.md`](email-setup.md): a provider account, three DNS
+records on the sending domain, and `MAIL_API_KEY` / `MAIL_FROM`. Then, with the
+production environment loaded:
+
+```bash
+railway run npm run mail:verify -w server -- --send you@your-domain.org
+```
+
+The send is the part that matters. Reading the variables cannot tell you
+whether the provider has verified your sending domain, and an unverified domain
+is rejected at send time — which, because `mailer.ts` never throws, looks
+exactly like everything working.
+
+`launch:check` warns rather than fails on this, deliberately: a deploy that
+cannot bill is giving the product away, a deploy that cannot email is quieter
+than it should be, and taking the service down over the second would be the
+worse outcome. Treat the warning as a to-do, not as noise.
+
+---
+
+## 4. Get out of Testing on Google
 
 Full detail in [`google-oauth-verification.md`](google-oauth-verification.md),
 including the exact scope justification and demo-video script.
@@ -150,7 +180,7 @@ number until verification lands, which is the real reason to start it early.
 
 ---
 
-## 4. After the switch
+## 5. After the switch
 
 - **Check the Docs API quota before the traffic arrives.** *APIs & Services →
   Google Docs API → Quotas*. The runner caps itself at 55 writes/min *per job*

@@ -100,6 +100,14 @@ login only helps if you hit anonymous pull rate limits.)
    # SUPPORT_EMAIL is optional — it already defaults to help@turtlegames.org.
    LEGAL_OPERATOR=<legal entity or individual operating the service>
    LEGAL_JURISDICTION=<governing law, e.g. England and Wales>
+
+   # Optional but strongly wanted in production: without these, a job that
+   # finishes hours after the user closed the tab tells nobody. The sending
+   # domain has to be verified with the provider first — see
+   # docs/email-setup.md, then check it with
+   # `railway run npm run mail:verify -w server -- --send you@your-domain.org`.
+   MAIL_API_KEY=<re_… from your mail provider>
+   MAIL_FROM=TurtleType <notifications@mail.turtlegames.org>
    ```
 
    Leave `PORT` alone — Railway sets it. Leave `DATABASE_URL` alone too: use

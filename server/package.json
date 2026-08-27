@@ -12,6 +12,7 @@
     "typecheck": "tsc -p tsconfig.test.json",
     "test": "tsx --test \"src/**/*.test.ts\"",
     "stripe:verify": "tsx src/billing/verify.ts",
+    "mail:verify": "tsx src/notify/verify.ts",
     "launch:check": "tsx src/launchCheck.ts"
   },
   "dependencies": {
